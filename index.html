@@ -213,6 +213,29 @@
   .note { margin: 16px 0 0; font-size: 14px; color: var(--soft); }
   @media (max-width: 640px) { th:nth-child(2), td:nth-child(2) { display: none; } input { width: 110px; } }
 
+  /* 드라이브 게임 */
+  .game-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 20px; align-items: start; }
+  #driveGame { width: 100%; height: auto; aspect-ratio: 760 / 460; border-radius: 10px; background: #1a1f28;
+    box-shadow: 0 10px 30px rgba(20,28,38,.25); display: block; cursor: pointer; touch-action: none; }
+  .game-hud { display: flex; flex-direction: column; gap: 16px; }
+  .pedals { display: flex; gap: 12px; }
+  .pedal { flex: 1; height: 72px; border-radius: 8px 8px 10px 10px; background: #2a333d;
+    display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px;
+    color: #9fb0bd; font: 500 12px var(--sans); letter-spacing: .08em; position: relative;
+    box-shadow: inset 0 -4px 0 rgba(0,0,0,.3); transition: transform .08s, box-shadow .08s, background .08s; }
+  .pedal.active { transform: translateY(4px); box-shadow: inset 0 -1px 0 rgba(0,0,0,.3); }
+  #pedalGas.active { background: var(--green); color: #fff; }
+  #pedalBrake.active { background: #b3321f; color: #fff; }
+  .game-tip { margin: 0; font-size: 13px; color: var(--soft); line-height: 1.7; }
+  .touch-controls { display: none; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .touch-controls button { padding: 14px 0; border: 1px solid #b9c3cb; border-radius: 8px; background: #fff;
+    font: 500 14px var(--sans); color: var(--ink); cursor: pointer; }
+  .touch-controls button:active { background: #d3dde0; }
+  @media (max-width: 760px) {
+    .game-wrap { grid-template-columns: 1fr; }
+    .touch-controls { display: grid; }
+  }
+
   footer { padding: 48px 20px 64px; text-align: center; color: var(--soft); font: italic 15px var(--serif); }
 </style>
 </head>
@@ -220,7 +243,7 @@
 
 <nav>
   <b>길 위의 기록</b>
-  <div><a href="#photo">사진</a><a href="#course">드라이브 코스</a><a href="#care">차량 관리</a><a href="#faq">FAQ</a></div>
+  <div><a href="#photo">사진</a><a href="#course">드라이브 코스</a><a href="#care">차량 관리</a><a href="#game">게임</a><a href="#faq">FAQ</a></div>
 </nav>
 
 <header class="hero">
@@ -286,6 +309,30 @@
         <tbody id="rows"></tbody>
       </table>
       <p class="note">주기는 일반적인 참고값입니다. 정확한 시기는 내 차 매뉴얼과 정비소 안내를 우선하세요.</p>
+    </div>
+  </section>
+
+  <section id="game">
+    <h2>해질녘 드라이브 게임</h2>
+    <p class="lead">노을 진 고속도로를 달리며 앞차를 피하거나 밀어붙이세요. 엑셀과 브레이크를 밟는 발도 함께 움직입니다. 플레이어 차는 메르세데스-벤츠 CLE 쿠페를 모티브로 했습니다.</p>
+    <div class="game-wrap">
+      <canvas id="driveGame" width="760" height="460" aria-label="해질녘 드라이브 게임 화면"></canvas>
+      <div class="game-hud">
+        <div class="pedals" aria-hidden="true">
+          <div class="pedal" id="pedalBrake"><span>BRAKE</span></div>
+          <div class="pedal" id="pedalGas"><span>GAS</span></div>
+        </div>
+        <p class="game-tip">
+          <b>조작</b> · ← → 좌우 이동 · ↑/Space 엑셀 · ↓ 브레이크<br>
+          모바일은 화면 아래 버튼을 사용하세요.
+        </p>
+        <div class="touch-controls" aria-hidden="true">
+          <button type="button" data-k="left">◀</button>
+          <button type="button" data-k="brake">브레이크</button>
+          <button type="button" data-k="gas">엑셀</button>
+          <button type="button" data-k="right">▶</button>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -360,6 +407,306 @@
   odo.addEventListener('input', save);
   rows.addEventListener('input', e => { if (e.target.dataset.i !== undefined) { data.last[e.target.dataset.i] = e.target.value; save(); } });
   render();
+})();
+</script>
+
+<script>
+/* 해질녘 드라이브 게임 — 벤츠 CLE 쿠페 모티브 */
+(() => {
+  const canvas = document.getElementById('driveGame');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // 도로 영역
+  const ROAD_X = 150, ROAD_W = W - 300;            // 도로 좌우 경계
+  const LANES = 3;
+  const laneW = ROAD_W / LANES;
+  const laneCenter = i => ROAD_X + laneW * (i + 0.5);
+
+  // 입력 상태
+  const keys = { left: false, right: false, gas: false, brake: false };
+  const pedalGas = document.getElementById('pedalGas');
+  const pedalBrake = document.getElementById('pedalBrake');
+
+  // 플레이어
+  const player = { w: 54, h: 96, x: laneCenter(1), y: H - 130, vx: 0 };
+  let speed = 3;                 // 현재 속도 (도로 스크롤)
+  const SPEED_MIN = 1.2, SPEED_MAX = 11, SPEED_CRUISE = 3;
+
+  // 상태
+  let running = false, started = false, over = false;
+  let score = 0, distance = 0, best = 0;
+  try { best = parseInt(localStorage.getItem('roadnote-game-best') || '0', 10) || 0; } catch (e) {}
+
+  // 적 차량 + 밀려난 파편(쳐낸 차)
+  let enemies = [];
+  let debris = [];
+  let dashOffset = 0;
+  let spawnTimer = 0;
+
+  const ENEMY_COLORS = ['#c0392b', '#2e5a86', '#4a4a4a', '#7a6a3a', '#355f4d'];
+
+  function reset() {
+    enemies = []; debris = [];
+    player.x = laneCenter(1); player.vx = 0;
+    speed = SPEED_CRUISE; score = 0; distance = 0;
+    over = false; started = true; running = true;
+    spawnTimer = 0;
+    loop();
+  }
+
+  function spawnEnemy() {
+    const lane = Math.floor(Math.random() * LANES);
+    enemies.push({
+      x: laneCenter(lane), y: -120,
+      w: 52, h: 94,
+      vy: 0,                        // 상대 속도(밀려날 때 사용)
+      color: ENEMY_COLORS[Math.floor(Math.random() * ENEMY_COLORS.length)],
+      hit: false, spin: 0, rot: 0, offx: 0
+    });
+  }
+
+  // ===== 그리기 =====
+  function drawBackground() {
+    // 해질녘 하늘
+    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.45);
+    sky.addColorStop(0, '#f0a35e');
+    sky.addColorStop(.5, '#f6c98e');
+    sky.addColorStop(1, '#cdd5cf');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H * 0.45);
+    // 해
+    ctx.fillStyle = 'rgba(255,240,205,.9)';
+    ctx.beginPath(); ctx.arc(W * 0.7, H * 0.3, 42, 0, Math.PI * 2); ctx.fill();
+    // 원경 땅
+    ctx.fillStyle = '#6a7d74'; ctx.fillRect(0, H * 0.4, W, H * 0.06);
+    // 잔디/둔치
+    ctx.fillStyle = '#3f5a4c'; ctx.fillRect(0, H * 0.45, W, H);
+    // 도로
+    ctx.fillStyle = '#2b2f36'; ctx.fillRect(ROAD_X, 0, ROAD_W, H);
+    // 갓길 라인
+    ctx.fillStyle = '#d9d4c4';
+    ctx.fillRect(ROAD_X - 6, 0, 6, H);
+    ctx.fillRect(ROAD_X + ROAD_W, 0, 6, H);
+    // 차선 점선 (스크롤)
+    ctx.fillStyle = 'rgba(241,234,213,.85)';
+    for (let l = 1; l < LANES; l++) {
+      const lx = ROAD_X + laneW * l - 3;
+      for (let y = -40 + (dashOffset % 60); y < H; y += 60) {
+        ctx.fillRect(lx, y, 6, 34);
+      }
+    }
+  }
+
+  // 벤츠 CLE 쿠페 모티브 차량
+  function drawCar(x, y, w, h, color, opts = {}) {
+    ctx.save();
+    ctx.translate(x, y);
+    if (opts.rot) ctx.rotate(opts.rot);
+    const hw = w / 2, hh = h / 2;
+    // 그림자
+    ctx.fillStyle = 'rgba(0,0,0,.28)';
+    roundRect(-hw + 3, -hh + 8, w, h, 14); ctx.fill();
+    // 바디 (쿠페 실루엣: 앞뒤로 좁아지는 둥근 형태)
+    const body = ctx.createLinearGradient(-hw, 0, hw, 0);
+    body.addColorStop(0, shade(color, -28));
+    body.addColorStop(.5, color);
+    body.addColorStop(1, shade(color, -28));
+    ctx.fillStyle = body;
+    roundRect(-hw, -hh, w, h, 16); ctx.fill();
+    // 보닛/트렁크 굴곡
+    ctx.fillStyle = shade(color, 14);
+    roundRect(-hw + 4, -hh + 6, w - 8, h * 0.3, 12); ctx.fill();
+    // 쿠페 루프 + 그린하우스(유리) — 뒤로 흐르는 쿠페 라인
+    const glass = ctx.createLinearGradient(0, -hh, 0, hh);
+    glass.addColorStop(0, '#2b3b47'); glass.addColorStop(1, '#17222b');
+    ctx.fillStyle = glass;
+    roundRect(-hw + 7, -hh + h * 0.3, w - 14, h * 0.4, 10); ctx.fill();
+    // A/C 필러 하이라이트
+    ctx.fillStyle = 'rgba(255,255,255,.08)';
+    roundRect(-hw + 9, -hh + h * 0.32, w - 18, 6, 4); ctx.fill();
+    // 헤드라이트 (CLE 특유의 얇은 LED) — 위쪽
+    ctx.fillStyle = '#f4f0dc';
+    roundRect(-hw + 5, -hh + 3, 12, 5, 2); ctx.fill();
+    roundRect(hw - 17, -hh + 3, 12, 5, 2); ctx.fill();
+    // 삼각별 그릴 포인트
+    ctx.fillStyle = 'rgba(230,236,240,.9)';
+    ctx.beginPath(); ctx.arc(0, -hh + 8, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#8a929a'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let a = 0; a < 3; a++) { const ang = -Math.PI/2 + a * (Math.PI*2/3); ctx.moveTo(0, -hh + 8); ctx.lineTo(Math.cos(ang)*4, -hh + 8 + Math.sin(ang)*4); }
+    ctx.stroke();
+    // 테일램프 (아래, 빨강) — 주행 중 점등
+    ctx.fillStyle = opts.brake ? '#ff5a4d' : '#c0392b';
+    roundRect(-hw + 5, hh - 9, 13, 5, 2); ctx.fill();
+    roundRect(hw - 18, hh - 9, 13, 5, 2); ctx.fill();
+    if (opts.brake) { ctx.shadowColor = '#ff5a4d'; ctx.shadowBlur = 10;
+      roundRect(-hw + 5, hh - 9, 13, 5, 2); ctx.fill(); roundRect(hw - 18, hh - 9, 13, 5, 2); ctx.fill(); ctx.shadowBlur = 0; }
+    ctx.restore();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function shade(hex, amt) {
+    const n = parseInt(hex.slice(1), 16);
+    let r = (n >> 16) + amt, g = ((n >> 8) & 255) + amt, b = (n & 255) + amt;
+    r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
+    return '#' + (r << 16 | g << 8 | b).toString(16).padStart(6, '0');
+  }
+
+  function overlayText(title, sub) {
+    ctx.fillStyle = 'rgba(16,21,27,.62)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#f6c98e'; ctx.textAlign = 'center';
+    ctx.font = '700 34px "Noto Serif KR", serif';
+    ctx.fillText(title, W / 2, H / 2 - 10);
+    ctx.fillStyle = '#e9edf0'; ctx.font = '400 16px "Noto Sans KR", sans-serif';
+    ctx.fillText(sub, W / 2, H / 2 + 24);
+    ctx.textAlign = 'start';
+  }
+
+  function drawHUD() {
+    ctx.fillStyle = 'rgba(16,21,27,.55)';
+    roundRect(ROAD_X + 8, 10, 150, 56, 8); ctx.fill();
+    ctx.fillStyle = '#e9edf0'; ctx.font = '500 14px "Noto Sans KR", sans-serif';
+    ctx.fillText('점수 ' + score, ROAD_X + 20, 30);
+    ctx.fillText('속도 ' + Math.round(speed * 18) + ' km/h', ROAD_X + 20, 52);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(16,21,27,.55)';
+    roundRect(ROAD_X + ROAD_W - 130, 10, 122, 34, 8); ctx.fill();
+    ctx.fillStyle = '#9fb0bd'; ctx.fillText('최고 ' + best, ROAD_X + ROAD_W - 18, 32);
+    ctx.textAlign = 'start';
+  }
+
+  // ===== 업데이트 =====
+  function update() {
+    // 페달 → 속도
+    if (keys.gas) speed = Math.min(SPEED_MAX, speed + 0.12);
+    else if (keys.brake) speed = Math.max(SPEED_MIN, speed - 0.22);
+    else speed += (SPEED_CRUISE - speed) * 0.02;     // 서서히 순항 속도로
+
+    // 페달 UI
+    pedalGas.classList.toggle('active', keys.gas);
+    pedalBrake.classList.toggle('active', keys.brake);
+
+    // 좌우 이동
+    const steer = 4.2;
+    if (keys.left) player.vx -= 0.8;
+    if (keys.right) player.vx += 0.8;
+    player.vx *= 0.82;
+    player.vx = Math.max(-steer, Math.min(steer, player.vx));
+    player.x += player.vx;
+    player.x = Math.max(ROAD_X + player.w / 2, Math.min(ROAD_X + ROAD_W - player.w / 2, player.x));
+
+    dashOffset += speed * 2;
+    distance += speed;
+    score = Math.floor(distance / 20);
+
+    // 스폰
+    spawnTimer -= speed;
+    if (spawnTimer <= 0) { spawnEnemy(); spawnTimer = 150 + Math.random() * 120; }
+
+    // 적 차량 이동 (화면 아래로 상대이동 = 내가 더 빠름)
+    enemies.forEach(e => {
+      if (!e.hit) {
+        e.y += speed;                 // 기본 상대속도
+      } else {
+        // 쳐낸 차: 회전하며 바깥으로 밀려남
+        e.y += e.vy; e.vy += 0.4;
+        e.offx += e.spin; e.rot += e.spin * 0.02;
+      }
+    });
+
+    // 충돌 판정
+    for (const e of enemies) {
+      if (e.hit) continue;
+      if (Math.abs(e.x - player.x) < (e.w + player.w) / 2 - 14 &&
+          Math.abs((e.y) - player.y) < (e.h + player.h) / 2 - 18) {
+        // 정면에서 빠르게 받으면 쳐냄, 느리면 게임오버
+        const closingFast = speed > 4.5;
+        const sideHit = Math.abs(e.x - player.x) > player.w * 0.35;
+        if (closingFast || sideHit) {
+          e.hit = true;
+          e.spin = (e.x < player.x ? -1 : 1) * (3 + Math.random() * 3);
+          e.vy = -speed * 0.4;
+          score += 50;
+          speed = Math.max(SPEED_MIN, speed - 1.2);   // 받으면 속도 살짝 줄어듦
+        } else {
+          endGame();
+          return;
+        }
+      }
+    }
+
+    // 정리
+    enemies = enemies.filter(e => e.y < H + 160 && Math.abs(e.offx) < W);
+  }
+
+  function endGame() {
+    over = true; running = false;
+    if (score > best) { best = score; try { localStorage.setItem('roadnote-game-best', String(best)); } catch (e) {} }
+    draw();
+    overlayText('쾅! 게임 오버', '점수 ' + score + ' · 클릭/스페이스로 다시 시작');
+  }
+
+  // ===== 렌더 =====
+  function draw() {
+    drawBackground();
+    enemies.forEach(e => drawCar(e.x + e.offx, e.y, e.w, e.h, e.color, { rot: e.rot }));
+    drawCar(player.x, player.y, player.w, player.h, '#1b2430', { brake: keys.brake });
+    drawHUD();
+  }
+
+  function loop() {
+    if (!running) return;
+    update();
+    if (over) return;
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // 시작 화면
+  function idleScreen() {
+    drawBackground();
+    drawCar(laneCenter(1), H - 130, player.w, player.h, '#1b2430', {});
+    overlayText('해질녘 드라이브', '클릭 또는 스페이스로 시작');
+  }
+
+  // ===== 입력 =====
+  const keyMap = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'gas', ' ': 'gas', ArrowDown: 'brake' };
+  window.addEventListener('keydown', e => {
+    if (e.key in keyMap) {
+      // 게임 영역이 보일 때만 방향키 스크롤 방지
+      const r = canvas.getBoundingClientRect();
+      const visible = r.top < window.innerHeight && r.bottom > 0;
+      if (visible) e.preventDefault();
+      keys[keyMap[e.key]] = true;
+      if (!running && (e.key === ' ' || e.key === 'ArrowUp')) { if (visible) reset(); }
+    }
+  });
+  window.addEventListener('keyup', e => { if (e.key in keyMap) keys[keyMap[e.key]] = false; });
+
+  canvas.addEventListener('click', () => { if (!running) reset(); });
+
+  // 터치 버튼
+  document.querySelectorAll('.touch-controls button').forEach(btn => {
+    const k = btn.dataset.k;
+    const on = ev => { ev.preventDefault(); if (!running) { reset(); } keys[k] = true; };
+    const off = ev => { ev.preventDefault(); keys[k] = false; };
+    btn.addEventListener('touchstart', on, { passive: false });
+    btn.addEventListener('touchend', off, { passive: false });
+    btn.addEventListener('mousedown', on);
+    btn.addEventListener('mouseup', off);
+    btn.addEventListener('mouseleave', off);
+  });
+
+  idleScreen();
 })();
 </script>
 </body>
