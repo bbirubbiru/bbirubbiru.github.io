@@ -314,7 +314,7 @@
 
   <section id="game">
     <h2>해질녘 드라이브 게임</h2>
-    <p class="lead">노을 진 고속도로를 달리며 앞차를 피하거나 밀어붙이세요. 엑셀과 브레이크를 밟는 발도 함께 움직입니다. 플레이어 차는 메르세데스-벤츠 CLE 쿠페를 모티브로 했습니다.</p>
+    <p class="lead">운전석에 앉아 노을 진 도로를 1인칭 시점으로 달리세요. 앞 유리 너머로 길이 입체감 있게 뻗어나가고, 다가오는 차를 빠른 속도로 들이받으면 쳐낼 수 있습니다. 보닛·핸들·대시보드는 메르세데스-벤츠 CLE 쿠페를 모티브로 했고, 엑셀과 브레이크를 밟으면 페달도 함께 움직입니다.</p>
     <div class="game-wrap">
       <canvas id="driveGame" width="760" height="460" aria-label="해질녘 드라이브 게임 화면"></canvas>
       <div class="game-hud">
@@ -411,158 +411,210 @@
 </script>
 
 <script>
-/* 해질녘 드라이브 게임 — 벤츠 CLE 쿠페 모티브 */
+/* 해질녘 드라이브 게임 — 1인칭 의사 3D · 벤츠 CLE 쿠페 모티브 */
 (() => {
   const canvas = document.getElementById('driveGame');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
 
-  // 도로 영역
-  const ROAD_X = 150, ROAD_W = W - 300;            // 도로 좌우 경계
+  // ===== 의사 3D 파라미터 =====
+  const CAM_H = 1000;          // 카메라(운전자 눈) 높이
+  const CAM_D = 0.84;          // 카메라 깊이(시야). 작을수록 넓은 화각
+  const SEG = 200;             // 세그먼트 z 길이
+  const ROAD_WIDTH = 2000;     // 도로 반폭
+  const DRAW_DIST = 160;       // 그릴 세그먼트 수
+  const HORIZON = H * 0.42;    // 지평선 y
   const LANES = 3;
-  const laneW = ROAD_W / LANES;
-  const laneCenter = i => ROAD_X + laneW * (i + 0.5);
 
-  // 입력 상태
+  // ===== 입력 =====
   const keys = { left: false, right: false, gas: false, brake: false };
   const pedalGas = document.getElementById('pedalGas');
   const pedalBrake = document.getElementById('pedalBrake');
 
-  // 플레이어
-  const player = { w: 54, h: 96, x: laneCenter(1), y: H - 130, vx: 0 };
-  let speed = 3;                 // 현재 속도 (도로 스크롤)
-  const SPEED_MIN = 1.2, SPEED_MAX = 11, SPEED_CRUISE = 3;
-
-  // 상태
-  let running = false, started = false, over = false;
-  let score = 0, distance = 0, best = 0;
+  // ===== 상태 =====
+  let running = false, over = false;
+  let playerX = 0;             // -1 ~ 1 (도로 중앙 기준)
+  let position = 0;           // 주행 누적 z
+  let speed = 0;              // 현재 속도
+  const MAX_SPEED = SEG * 1.9;
+  const CRUISE = SEG * 0.55;
+  let score = 0, best = 0;
   try { best = parseInt(localStorage.getItem('roadnote-game-best') || '0', 10) || 0; } catch (e) {}
-
-  // 적 차량 + 밀려난 파편(쳐낸 차)
   let enemies = [];
-  let debris = [];
-  let dashOffset = 0;
-  let spawnTimer = 0;
+  let spawnZ = 0;
+  let steerVis = 0;           // 핸들 시각 각도
 
-  const ENEMY_COLORS = ['#c0392b', '#2e5a86', '#4a4a4a', '#7a6a3a', '#355f4d'];
+  const ENEMY_COLORS = ['#c0392b', '#2e5a86', '#4a4a4a', '#7a6a3a', '#355f4d', '#b8842a'];
 
   function reset() {
-    enemies = []; debris = [];
-    player.x = laneCenter(1); player.vx = 0;
-    speed = SPEED_CRUISE; score = 0; distance = 0;
-    over = false; started = true; running = true;
-    spawnTimer = 0;
+    playerX = 0; position = 0; speed = CRUISE;
+    score = 0; enemies = []; spawnZ = 1500;
+    over = false; running = true;
     loop();
   }
 
-  function spawnEnemy() {
-    const lane = Math.floor(Math.random() * LANES);
-    enemies.push({
-      x: laneCenter(lane), y: -120,
-      w: 52, h: 94,
-      vy: 0,                        // 상대 속도(밀려날 때 사용)
-      color: ENEMY_COLORS[Math.floor(Math.random() * ENEMY_COLORS.length)],
-      hit: false, spin: 0, rot: 0, offx: 0
-    });
+  // 월드 좌표(x: -ROAD_WIDTH~, y: 높이, z: 거리) → 화면 투영
+  function project(x, y, z) {
+    const scale = CAM_D / Math.max(z, 1);
+    return {
+      x: W / 2 + scale * x * (W / 2),
+      y: HORIZON - scale * (y - CAM_H) * (H / 2) / 1000,
+      w: scale * ROAD_WIDTH * (W / 2),
+      scale
+    };
   }
 
-  // ===== 그리기 =====
-  function drawBackground() {
-    // 해질녘 하늘
-    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.45);
-    sky.addColorStop(0, '#f0a35e');
-    sky.addColorStop(.5, '#f6c98e');
-    sky.addColorStop(1, '#cdd5cf');
-    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H * 0.45);
-    // 해
-    ctx.fillStyle = 'rgba(255,240,205,.9)';
-    ctx.beginPath(); ctx.arc(W * 0.7, H * 0.3, 42, 0, Math.PI * 2); ctx.fill();
-    // 원경 땅
-    ctx.fillStyle = '#6a7d74'; ctx.fillRect(0, H * 0.4, W, H * 0.06);
-    // 잔디/둔치
-    ctx.fillStyle = '#3f5a4c'; ctx.fillRect(0, H * 0.45, W, H);
-    // 도로
-    ctx.fillStyle = '#2b2f36'; ctx.fillRect(ROAD_X, 0, ROAD_W, H);
-    // 갓길 라인
-    ctx.fillStyle = '#d9d4c4';
-    ctx.fillRect(ROAD_X - 6, 0, 6, H);
-    ctx.fillRect(ROAD_X + ROAD_W, 0, 6, H);
-    // 차선 점선 (스크롤)
-    ctx.fillStyle = 'rgba(241,234,213,.85)';
-    for (let l = 1; l < LANES; l++) {
-      const lx = ROAD_X + laneW * l - 3;
-      for (let y = -40 + (dashOffset % 60); y < H; y += 60) {
-        ctx.fillRect(lx, y, 6, 34);
-      }
-    }
-  }
-
-  // 벤츠 CLE 쿠페 모티브 차량
-  function drawCar(x, y, w, h, color, opts = {}) {
-    ctx.save();
-    ctx.translate(x, y);
-    if (opts.rot) ctx.rotate(opts.rot);
-    const hw = w / 2, hh = h / 2;
-    // 그림자
-    ctx.fillStyle = 'rgba(0,0,0,.28)';
-    roundRect(-hw + 3, -hh + 8, w, h, 14); ctx.fill();
-    // 바디 (쿠페 실루엣: 앞뒤로 좁아지는 둥근 형태)
-    const body = ctx.createLinearGradient(-hw, 0, hw, 0);
-    body.addColorStop(0, shade(color, -28));
-    body.addColorStop(.5, color);
-    body.addColorStop(1, shade(color, -28));
-    ctx.fillStyle = body;
-    roundRect(-hw, -hh, w, h, 16); ctx.fill();
-    // 보닛/트렁크 굴곡
-    ctx.fillStyle = shade(color, 14);
-    roundRect(-hw + 4, -hh + 6, w - 8, h * 0.3, 12); ctx.fill();
-    // 쿠페 루프 + 그린하우스(유리) — 뒤로 흐르는 쿠페 라인
-    const glass = ctx.createLinearGradient(0, -hh, 0, hh);
-    glass.addColorStop(0, '#2b3b47'); glass.addColorStop(1, '#17222b');
-    ctx.fillStyle = glass;
-    roundRect(-hw + 7, -hh + h * 0.3, w - 14, h * 0.4, 10); ctx.fill();
-    // A/C 필러 하이라이트
-    ctx.fillStyle = 'rgba(255,255,255,.08)';
-    roundRect(-hw + 9, -hh + h * 0.32, w - 18, 6, 4); ctx.fill();
-    // 헤드라이트 (CLE 특유의 얇은 LED) — 위쪽
-    ctx.fillStyle = '#f4f0dc';
-    roundRect(-hw + 5, -hh + 3, 12, 5, 2); ctx.fill();
-    roundRect(hw - 17, -hh + 3, 12, 5, 2); ctx.fill();
-    // 삼각별 그릴 포인트
-    ctx.fillStyle = 'rgba(230,236,240,.9)';
-    ctx.beginPath(); ctx.arc(0, -hh + 8, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#8a929a'; ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let a = 0; a < 3; a++) { const ang = -Math.PI/2 + a * (Math.PI*2/3); ctx.moveTo(0, -hh + 8); ctx.lineTo(Math.cos(ang)*4, -hh + 8 + Math.sin(ang)*4); }
-    ctx.stroke();
-    // 테일램프 (아래, 빨강) — 주행 중 점등
-    ctx.fillStyle = opts.brake ? '#ff5a4d' : '#c0392b';
-    roundRect(-hw + 5, hh - 9, 13, 5, 2); ctx.fill();
-    roundRect(hw - 18, hh - 9, 13, 5, 2); ctx.fill();
-    if (opts.brake) { ctx.shadowColor = '#ff5a4d'; ctx.shadowBlur = 10;
-      roundRect(-hw + 5, hh - 9, 13, 5, 2); ctx.fill(); roundRect(hw - 18, hh - 9, 13, 5, 2); ctx.fill(); ctx.shadowBlur = 0; }
-    ctx.restore();
-  }
-
-  function roundRect(x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
-  }
   function shade(hex, amt) {
     const n = parseInt(hex.slice(1), 16);
     let r = (n >> 16) + amt, g = ((n >> 8) & 255) + amt, b = (n & 255) + amt;
     r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
     return '#' + (r << 16 | g << 8 | b).toString(16).padStart(6, '0');
   }
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+
+  // ===== 배경(하늘·해) =====
+  function drawSky() {
+    const sky = ctx.createLinearGradient(0, 0, 0, HORIZON);
+    sky.addColorStop(0, '#e8884a');
+    sky.addColorStop(.45, '#f3b06a');
+    sky.addColorStop(.8, '#f6cf9a');
+    sky.addColorStop(1, '#d9c7a8');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, HORIZON);
+    // 해
+    const sx = W / 2 - playerX * 120, sy = HORIZON - 70;
+    const g = ctx.createRadialGradient(sx, sy, 6, sx, sy, 90);
+    g.addColorStop(0, 'rgba(255,248,224,.95)'); g.addColorStop(.5, 'rgba(249,210,150,.7)'); g.addColorStop(1, 'rgba(249,210,150,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, sy, 90, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,245,215,.95)'; ctx.beginPath(); ctx.arc(sx, sy, 40, 0, Math.PI * 2); ctx.fill();
+    // 원경 실루엣 능선
+    ctx.fillStyle = 'rgba(70,86,96,.45)';
+    ctx.beginPath(); ctx.moveTo(0, HORIZON);
+    for (let i = 0; i <= 10; i++) ctx.lineTo(W * i / 10, HORIZON - 10 - Math.sin(i * 1.7) * 14 - (i%3)*6);
+    ctx.lineTo(W, HORIZON); ctx.closePath(); ctx.fill();
+  }
+
+  // ===== 도로(세그먼트 원근) =====
+  function drawRoad() {
+    const baseSeg = Math.floor(position / SEG);
+    let maxY = H;
+    for (let n = DRAW_DIST; n > 0; n--) {
+      const segIndex = baseSeg + n;
+      const z1 = (segIndex) * SEG - position;
+      const z2 = (segIndex + 1) * SEG - position;
+      if (z2 <= 0) continue;
+      // 완만한 굽이(사인)로 생동감
+      const curve1 = Math.sin(segIndex * 0.06) * 700;
+      const curve2 = Math.sin((segIndex + 1) * 0.06) * 700;
+      const p1 = project(-playerX * ROAD_WIDTH + curve1, 0, z1);
+      const p2 = project(-playerX * ROAD_WIDTH + curve2, 0, z2);
+      if (p1.y >= maxY) continue;
+      maxY = p1.y;
+
+      const dark = (segIndex % 2) === 0;
+      // 잔디/둔치
+      ctx.fillStyle = dark ? '#3c584a' : '#45624f';
+      ctx.fillRect(0, p2.y, W, p1.y - p2.y + 1);
+      // 도로
+      ctx.fillStyle = dark ? '#2b2f36' : '#31353d';
+      trapezoid(p1.x, p1.y, p1.w, p2.x, p2.y, p2.w);
+      // 갓길
+      ctx.fillStyle = dark ? '#c9412f' : '#e9e3d2';
+      trapezoid(p1.x, p1.y, p1.w * 1.06, p2.x, p2.y, p2.w * 1.06, true);
+      ctx.fillStyle = dark ? '#2b2f36' : '#31353d';
+      trapezoid(p1.x, p1.y, p1.w, p2.x, p2.y, p2.w);
+      // 차선
+      if (dark) {
+        ctx.fillStyle = 'rgba(241,234,213,.9)';
+        for (let l = 1; l < LANES; l++) {
+          const off = (l / LANES - 0.5) * 2;   // -.33, .33 ...
+          const lx1 = p1.x + off * p1.w, lx2 = p2.x + off * p2.w;
+          trapezoid(lx1, p1.y, p1.w * 0.03, lx2, p2.y, p2.w * 0.03);
+        }
+      }
+    }
+  }
+  function trapezoid(x1, y1, w1, x2, y2, w2, edge) {
+    ctx.beginPath();
+    ctx.moveTo(x1 - w1, y1); ctx.lineTo(x1 + w1, y1);
+    ctx.lineTo(x2 + w2, y2); ctx.lineTo(x2 - w2, y2);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // ===== 적 차량(뒤에서 본 모습, 원근 스케일) =====
+  function drawEnemy(e) {
+    const z = e.z - position;
+    if (z <= 0) return;
+    const curve = Math.sin((position + z) / SEG * 0.06) * 700;
+    const p = project(-playerX * ROAD_WIDTH + curve + e.x * ROAD_WIDTH, 0, z);
+    const cw = Math.max(8, p.w * 0.46) * (e.hit ? 1 : 1);
+    const ch = cw * 0.82;
+    let cx = p.x + (e.hit ? e.offx * p.scale * 1400 : 0);
+    const cy = p.y;
+    ctx.save();
+    ctx.translate(cx, cy - ch * 0.5);
+    if (e.hit) ctx.rotate(e.rot);
+    const hw = cw / 2, hh = ch / 2;
+    // 그림자
+    ctx.fillStyle = 'rgba(0,0,0,.3)';
+    ctx.beginPath(); ctx.ellipse(0, hh * 0.9, hw * 0.95, hh * 0.22, 0, 0, Math.PI * 2); ctx.fill();
+    // 바디
+    const bg = ctx.createLinearGradient(0, -hh, 0, hh);
+    bg.addColorStop(0, shade(e.color, 18)); bg.addColorStop(1, shade(e.color, -24));
+    ctx.fillStyle = bg; roundRect(-hw, -hh, cw, ch, Math.max(3, cw * 0.12)); ctx.fill();
+    // 리어 윈도우
+    ctx.fillStyle = '#17222b'; roundRect(-hw * 0.74, -hh * 0.72, cw * 0.74, ch * 0.4, cw * 0.08); ctx.fill();
+    // 테일램프
+    ctx.fillStyle = '#ff5a4d';
+    roundRect(-hw * 0.9, hh * 0.28, cw * 0.26, ch * 0.16, 2); ctx.fill();
+    roundRect(hw * 0.64, hh * 0.28, cw * 0.26, ch * 0.16, 2); ctx.fill();
+    ctx.restore();
+  }
+
+  // ===== 운전석(CLE 쿠페 대시보드/보닛/핸들) =====
+  function drawCockpit() {
+    const dashTop = H * 0.68;
+    // 보닛(차 앞)
+    const hood = ctx.createLinearGradient(0, dashTop, 0, H);
+    hood.addColorStop(0, '#20262e'); hood.addColorStop(1, '#0d1014');
+    ctx.fillStyle = hood;
+    ctx.beginPath();
+    ctx.moveTo(0, H); ctx.lineTo(0, H * 0.88);
+    ctx.quadraticCurveTo(W * 0.5, dashTop, W, H * 0.88);
+    ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+    // 보닛 CLE 캐릭터 라인
+    ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(W * 0.3, H * 0.9); ctx.quadraticCurveTo(W * 0.5, H * 0.8, W * 0.7, H * 0.9); ctx.stroke();
+    // 보닛 끝 삼각별 엠블럼
+    ctx.fillStyle = 'rgba(230,236,240,.85)';
+    const ex = W * 0.5, ey = H * 0.84, er = 9;
+    ctx.beginPath(); ctx.arc(ex, ey, er, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#6b7178'; ctx.lineWidth = 1.5; ctx.beginPath();
+    for (let a = 0; a < 3; a++) { const ang = -Math.PI/2 + a * (Math.PI*2/3); ctx.moveTo(ex, ey); ctx.lineTo(ex + Math.cos(ang)*er, ey + Math.sin(ang)*er); }
+    ctx.stroke();
+    // A-필러(좌우 기둥)
+    ctx.fillStyle = '#10151b';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(W*0.14, 0); ctx.lineTo(0, H*0.5); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(W, 0); ctx.lineTo(W*0.86, 0); ctx.lineTo(W, H*0.5); ctx.closePath(); ctx.fill();
+    // 스티어링 휠 (하단 중앙, 조향에 따라 회전)
+    ctx.save();
+    ctx.translate(W * 0.5, H + 36);
+    ctx.rotate(steerVis * 0.5);
+    ctx.strokeStyle = '#1a1f26'; ctx.lineWidth = 16;
+    ctx.beginPath(); ctx.arc(0, 0, 92, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke();
+    ctx.lineWidth = 10; ctx.strokeStyle = '#2a333d';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -92); ctx.moveTo(0, 0); ctx.lineTo(-80, 30); ctx.moveTo(0, 0); ctx.lineTo(80, 30); ctx.stroke();
+    // 삼각별 센터
+    ctx.fillStyle = '#c9ccd0'; ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
 
   function overlayText(title, sub) {
-    ctx.fillStyle = 'rgba(16,21,27,.62)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(16,21,27,.6)'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#f6c98e'; ctx.textAlign = 'center';
     ctx.font = '700 34px "Noto Serif KR", serif';
     ctx.fillText(title, W / 2, H / 2 - 10);
@@ -572,94 +624,70 @@
   }
 
   function drawHUD() {
-    ctx.fillStyle = 'rgba(16,21,27,.55)';
-    roundRect(ROAD_X + 8, 10, 150, 56, 8); ctx.fill();
-    ctx.fillStyle = '#e9edf0'; ctx.font = '500 14px "Noto Sans KR", sans-serif';
-    ctx.fillText('점수 ' + score, ROAD_X + 20, 30);
-    ctx.fillText('속도 ' + Math.round(speed * 18) + ' km/h', ROAD_X + 20, 52);
+    ctx.fillStyle = 'rgba(16,21,27,.55)'; roundRect(14, 12, 168, 58, 8); ctx.fill();
+    ctx.fillStyle = '#e9edf0'; ctx.font = '500 14px "Noto Sans KR", sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('점수 ' + score, 28, 34);
+    ctx.fillText('속도 ' + Math.round(speed / SEG * 70) + ' km/h', 28, 56);
     ctx.textAlign = 'right';
-    ctx.fillStyle = 'rgba(16,21,27,.55)';
-    roundRect(ROAD_X + ROAD_W - 130, 10, 122, 34, 8); ctx.fill();
-    ctx.fillStyle = '#9fb0bd'; ctx.fillText('최고 ' + best, ROAD_X + ROAD_W - 18, 32);
+    ctx.fillStyle = 'rgba(16,21,27,.55)'; roundRect(W - 150, 12, 136, 34, 8); ctx.fill();
+    ctx.fillStyle = '#9fb0bd'; ctx.fillText('최고 ' + best, W - 28, 34);
     ctx.textAlign = 'start';
   }
 
   // ===== 업데이트 =====
   function update() {
-    // 페달 → 속도
-    if (keys.gas) speed = Math.min(SPEED_MAX, speed + 0.12);
-    else if (keys.brake) speed = Math.max(SPEED_MIN, speed - 0.22);
-    else speed += (SPEED_CRUISE - speed) * 0.02;     // 서서히 순항 속도로
-
-    // 페달 UI
+    if (keys.gas) speed = Math.min(MAX_SPEED, speed + SEG * 0.022);
+    else if (keys.brake) speed = Math.max(0, speed - SEG * 0.05);
+    else speed += (CRUISE - speed) * 0.015;
     pedalGas.classList.toggle('active', keys.gas);
     pedalBrake.classList.toggle('active', keys.brake);
 
-    // 좌우 이동
-    const steer = 4.2;
-    if (keys.left) player.vx -= 0.8;
-    if (keys.right) player.vx += 0.8;
-    player.vx *= 0.82;
-    player.vx = Math.max(-steer, Math.min(steer, player.vx));
-    player.x += player.vx;
-    player.x = Math.max(ROAD_X + player.w / 2, Math.min(ROAD_X + ROAD_W - player.w / 2, player.x));
+    const steer = 0.012 + speed / MAX_SPEED * 0.004;
+    if (keys.left) { playerX -= steer; steerVis += (-1 - steerVis) * 0.2; }
+    else if (keys.right) { playerX += steer; steerVis += (1 - steerVis) * 0.2; }
+    else steerVis += (0 - steerVis) * 0.2;
+    playerX = Math.max(-1.1, Math.min(1.1, playerX));
 
-    dashOffset += speed * 2;
-    distance += speed;
-    score = Math.floor(distance / 20);
+    position += speed;
+    score = Math.floor(position / SEG);
 
-    // 스폰
-    spawnTimer -= speed;
-    if (spawnTimer <= 0) { spawnEnemy(); spawnTimer = 150 + Math.random() * 120; }
+    // 스폰 (앞쪽 z에)
+    if (position + 5000 > spawnZ) {
+      const lane = (Math.floor(Math.random() * LANES) - 1) * 0.62;
+      enemies.push({ z: spawnZ + 3000, x: lane, color: ENEMY_COLORS[Math.floor(Math.random()*ENEMY_COLORS.length)], hit: false, rot: 0, offx: 0, spin: 0, vy: 0 });
+      spawnZ += 1400 + Math.random() * 1200;
+    }
 
-    // 적 차량 이동 (화면 아래로 상대이동 = 내가 더 빠름)
-    enemies.forEach(e => {
-      if (!e.hit) {
-        e.y += speed;                 // 기본 상대속도
-      } else {
-        // 쳐낸 차: 회전하며 바깥으로 밀려남
-        e.y += e.vy; e.vy += 0.4;
-        e.offx += e.spin; e.rot += e.spin * 0.02;
-      }
-    });
-
-    // 충돌 판정
+    // 충돌/정리
     for (const e of enemies) {
-      if (e.hit) continue;
-      if (Math.abs(e.x - player.x) < (e.w + player.w) / 2 - 14 &&
-          Math.abs((e.y) - player.y) < (e.h + player.h) / 2 - 18) {
-        // 정면에서 빠르게 받으면 쳐냄, 느리면 게임오버
-        const closingFast = speed > 4.5;
-        const sideHit = Math.abs(e.x - player.x) > player.w * 0.35;
-        if (closingFast || sideHit) {
-          e.hit = true;
-          e.spin = (e.x < player.x ? -1 : 1) * (3 + Math.random() * 3);
-          e.vy = -speed * 0.4;
-          score += 50;
-          speed = Math.max(SPEED_MIN, speed - 1.2);   // 받으면 속도 살짝 줄어듦
-        } else {
-          endGame();
-          return;
+      const z = e.z - position;
+      if (e.hit) { e.rot += e.spin; e.offx += e.spin * 0.6; e.z += e.vy; e.vy += 2; continue; }
+      if (z > 0 && z < SEG * 1.3) {
+        if (Math.abs(e.x - playerX) < 0.42) {
+          const fast = speed > CRUISE * 1.15;
+          if (fast) {
+            e.hit = true; e.spin = (e.x < playerX ? -1 : 1) * 0.08; e.vy = -speed * 0.2;
+            score += 50; speed = Math.max(CRUISE * 0.6, speed - SEG * 0.5);
+          } else { endGame(); return; }
         }
       }
     }
-
-    // 정리
-    enemies = enemies.filter(e => e.y < H + 160 && Math.abs(e.offx) < W);
+    enemies = enemies.filter(e => (e.z - position) > -400 && (e.z - position) < 40000 && Math.abs(e.offx) < 3);
   }
 
   function endGame() {
     over = true; running = false;
     if (score > best) { best = score; try { localStorage.setItem('roadnote-game-best', String(best)); } catch (e) {} }
-    draw();
-    overlayText('쾅! 게임 오버', '점수 ' + score + ' · 클릭/스페이스로 다시 시작');
+    draw(); overlayText('쾅! 게임 오버', '점수 ' + score + ' · 클릭/스페이스로 다시 시작');
   }
 
   // ===== 렌더 =====
   function draw() {
-    drawBackground();
-    enemies.forEach(e => drawCar(e.x + e.offx, e.y, e.w, e.h, e.color, { rot: e.rot }));
-    drawCar(player.x, player.y, player.w, player.h, '#1b2430', { brake: keys.brake });
+    drawSky();
+    drawRoad();
+    // 먼 것부터 그리기 위해 z 내림차순 정렬
+    enemies.slice().sort((a, b) => (b.z) - (a.z)).forEach(drawEnemy);
+    drawCockpit();
     drawHUD();
   }
 
@@ -671,33 +699,28 @@
     requestAnimationFrame(loop);
   }
 
-  // 시작 화면
   function idleScreen() {
-    drawBackground();
-    drawCar(laneCenter(1), H - 130, player.w, player.h, '#1b2430', {});
-    overlayText('해질녘 드라이브', '클릭 또는 스페이스로 시작');
+    drawSky(); drawRoad(); drawCockpit();
+    overlayText('해질녘 드라이브 (운전자 시점)', '클릭 또는 스페이스로 시작');
   }
 
   // ===== 입력 =====
   const keyMap = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'gas', ' ': 'gas', ArrowDown: 'brake' };
   window.addEventListener('keydown', e => {
     if (e.key in keyMap) {
-      // 게임 영역이 보일 때만 방향키 스크롤 방지
       const r = canvas.getBoundingClientRect();
       const visible = r.top < window.innerHeight && r.bottom > 0;
       if (visible) e.preventDefault();
       keys[keyMap[e.key]] = true;
-      if (!running && (e.key === ' ' || e.key === 'ArrowUp')) { if (visible) reset(); }
+      if (!running && (e.key === ' ' || e.key === 'ArrowUp') && visible) reset();
     }
   });
   window.addEventListener('keyup', e => { if (e.key in keyMap) keys[keyMap[e.key]] = false; });
-
   canvas.addEventListener('click', () => { if (!running) reset(); });
 
-  // 터치 버튼
   document.querySelectorAll('.touch-controls button').forEach(btn => {
     const k = btn.dataset.k;
-    const on = ev => { ev.preventDefault(); if (!running) { reset(); } keys[k] = true; };
+    const on = ev => { ev.preventDefault(); if (!running) reset(); keys[k] = true; };
     const off = ev => { ev.preventDefault(); keys[k] = false; };
     btn.addEventListener('touchstart', on, { passive: false });
     btn.addEventListener('touchend', off, { passive: false });
