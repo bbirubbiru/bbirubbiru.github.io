@@ -4,10 +4,76 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>길 위의 기록 — 자동차 사진, 드라이브 코스, 차량 관리</title>
-<meta name="description" content="자동차 사진과 드라이브 코스, 차량 관리 정보를 모아 두는 개인 기록장">
+<meta name="description" content="직접 다녀온 드라이브 코스와 자동차 사진, 그리고 교체 주기를 계산해 주는 차량 관리 기록을 모아 둔 개인 사이트입니다.">
+<meta name="keywords" content="드라이브 코스, 자동차 사진, 차량 관리, 엔진오일 교체 주기, 서울 근교 드라이브, 북악스카이웨이, 동해안 7번국도">
+<meta name="author" content="bbirubbiru">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#232a33">
+<link rel="canonical" href="https://bbirubbiru.github.io/">
+
+<!-- Open Graph (카카오톡·페이스북·슬랙 공유 미리보기) -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="길 위의 기록">
+<meta property="og:title" content="길 위의 기록 — 자동차 사진, 드라이브 코스, 차량 관리">
+<meta property="og:description" content="직접 다녀온 드라이브 코스와 자동차 사진, 차량 관리 기록을 모아 둔 개인 사이트.">
+<meta property="og:url" content="https://bbirubbiru.github.io/">
+<meta property="og:image" content="https://bbirubbiru.github.io/images/images.jpg">
+<meta property="og:locale" content="ko_KR">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="길 위의 기록 — 자동차 사진, 드라이브 코스, 차량 관리">
+<meta name="twitter:description" content="직접 다녀온 드라이브 코스와 자동차 사진, 차량 관리 기록을 모아 둔 개인 사이트.">
+<meta name="twitter:image" content="https://bbirubbiru.github.io/images/images.jpg">
+
+<!-- favicon (인라인 SVG, 추가 파일 불필요) -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23232a33'/%3E%3Ctext x='16' y='22' font-size='18' text-anchor='middle' fill='%23d99a2b' font-family='serif'%3E길%3C/text%3E%3C/svg%3E">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500&family=Noto+Serif+KR:wght@400;700&display=swap" rel="stylesheet">
+
+<!-- 구조화 데이터: 검색엔진 리치 스니펫 + AI 검색(GEO) 인용 대응 -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://bbirubbiru.github.io/#website",
+      "url": "https://bbirubbiru.github.io/",
+      "name": "길 위의 기록",
+      "description": "자동차 사진과 드라이브 코스, 차량 관리 정보를 모아 두는 개인 기록장",
+      "inLanguage": "ko-KR",
+      "author": { "@id": "https://bbirubbiru.github.io/#person" }
+    },
+    {
+      "@type": "Person",
+      "@id": "https://bbirubbiru.github.io/#person",
+      "name": "bbirubbiru",
+      "url": "https://bbirubbiru.github.io/"
+    },
+    {
+      "@type": "ItemList",
+      "name": "다시 가고 싶은 드라이브 코스",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "item": { "@type": "TouristAttraction", "name": "북악스카이웨이", "description": "도심에서 가장 빨리 닿는 야경 드라이브 길. 해가 진 뒤 서울 야경이 좋다.", "address": { "@type": "PostalAddress", "addressRegion": "서울", "addressCountry": "KR" } } },
+        { "@type": "ListItem", "position": 2, "item": { "@type": "TouristAttraction", "name": "북한강변 따라 양평", "description": "강변을 끼고 달리다 카페에 들르는 반나절 코스. 이른 아침 안개 낀 강이 인상적.", "address": { "@type": "PostalAddress", "addressRegion": "경기", "addressCountry": "KR" } } },
+        { "@type": "ListItem", "position": 3, "item": { "@type": "TouristAttraction", "name": "동해안 7번 국도", "description": "창밖으로 바다가 계속 따라오는 장거리 코스. 하루 일정 추천.", "address": { "@type": "PostalAddress", "addressRegion": "강원", "addressCountry": "KR" } } },
+        { "@type": "ListItem", "position": 4, "item": { "@type": "TouristAttraction", "name": "제주 해안도로 일주", "description": "구간마다 풍경이 바뀌는 1박 이상 여행 코스. 바람이 센 날 주차 시 문 주의.", "address": { "@type": "PostalAddress", "addressRegion": "제주", "addressCountry": "KR" } } }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "서울 근교에서 야경 드라이브 코스를 추천한다면?", "acceptedAnswer": { "@type": "Answer", "text": "북악스카이웨이가 도심에서 가장 가깝습니다. 해가 진 뒤 서울 야경이 켜지는 시간대가 좋고, 주말 저녁은 붐비니 평일을 추천합니다." } },
+        { "@type": "Question", "name": "엔진오일은 몇 km마다 교체하나요?", "acceptedAnswer": { "@type": "Answer", "text": "일반적인 참고 주기는 약 8,000km입니다. 정확한 시기는 차량 매뉴얼과 정비소 안내를 우선하세요." } },
+        { "@type": "Question", "name": "하루 코스로 좋은 장거리 드라이브는?", "acceptedAnswer": { "@type": "Answer", "text": "동해안 7번 국도가 대표적입니다. 창밖으로 바다가 계속 이어지며, 중간에 내려 걷는 시간을 넉넉히 잡는 편이 좋습니다." } }
+      ]
+    }
+  ]
+}
+</script>
 <!--
   사진 교체 방법: 아래 갤러리의 <figure> 에서 style="--img:none" 을
   style="--img:url(images/01.jpg)" 처럼 바꾸고 images 폴더에 사진을 넣으세요.
@@ -71,6 +137,10 @@
     --img: none; background: var(--img), var(--g); background-size: cover; background-position: center; }
   .ph figcaption { position: absolute; left: 0; right: 0; bottom: 0; padding: 36px 14px 12px; color: #fff;
     font: italic 400 15px var(--serif); background: linear-gradient(transparent, rgba(10,16,24,.62)); }
+  .ph figcaption small { font-style: normal; font-size: 12px; opacity: .8; }
+  .soon-img::before { content: "준비 중"; position: absolute; top: 12px; left: 12px; z-index: 1;
+    padding: 2px 9px; border-radius: 999px; background: rgba(255,255,255,.85); color: var(--asphalt);
+    font: 500 12px var(--sans); }
   .a { grid-column: span 4; min-height: 340px; } .b { grid-column: span 2; }
   .c { grid-column: span 2; } .d { grid-column: span 2; } .e { grid-column: span 2; }
   .f { grid-column: span 6; min-height: 260px; }
@@ -107,7 +177,7 @@
 
 <nav>
   <b>길 위의 기록</b>
-  <div><a href="#photo">사진</a><a href="#course">드라이브 코스</a><a href="#care">차량 관리</a></div>
+  <div><a href="#photo">사진</a><a href="#course">드라이브 코스</a><a href="#care">차량 관리</a><a href="#faq">FAQ</a></div>
 </nav>
 
 <header class="hero">
@@ -125,12 +195,12 @@
     <h2>차와 함께 멈춘 순간</h2>
     <p class="lead">달리다가 문득 세워 두고 찍은 사진들. 사진 파일을 넣으면 이 자리에 그대로 채워집니다.</p>
     <div class="grid">
-      <figure class="ph a" style="--img:url('images/images.jpg'); --g:linear-gradient(160deg,#6f8fa8,#e6c9a0)"><figcaption>새벽 해안도로, 안개가 걷히기 전</figcaption></figure>
-      <figure class="ph b" style="--img:url('images/images%20(1).jpg'); --g:linear-gradient(200deg,#1f2c3a,#4e6a7a)"><figcaption>터널을 나서기 직전</figcaption></figure>
-      <figure class="ph c" style="--img:url('images/images%20(2).jpg'); --g:linear-gradient(180deg,#3d5f4f,#a9bf9c)"><figcaption>숲길의 오후</figcaption></figure>
-      <figure class="ph d" style="--g:linear-gradient(170deg,#c98f5a,#3a2f3d)"><figcaption>노을 속 주차장</figcaption></figure>
-      <figure class="ph e" style="--g:linear-gradient(190deg,#9fb6c4,#53697a)"><figcaption>비 온 뒤 앞유리</figcaption></figure>
-      <figure class="ph f" style="--g:linear-gradient(100deg,#141b26,#3b4a63 55%,#d99a2b)"><figcaption>밤의 고속도로, 한참 달린 뒤</figcaption></figure>
+      <figure class="ph a" role="img" aria-label="새벽 해안도로에서 안개가 걷히기 전 찍은 자동차 사진" style="--img:url('images/images.jpg'); --g:linear-gradient(160deg,#6f8fa8,#e6c9a0)"><figcaption>새벽 해안도로, 안개가 걷히기 전</figcaption></figure>
+      <figure class="ph b" role="img" aria-label="터널을 나서기 직전 찍은 자동차 사진" style="--img:url('images/images%20(1).jpg'); --g:linear-gradient(200deg,#1f2c3a,#4e6a7a)"><figcaption>터널을 나서기 직전</figcaption></figure>
+      <figure class="ph c" role="img" aria-label="숲길의 오후 풍경 사진" style="--img:url('images/images%20(2).jpg'); --g:linear-gradient(180deg,#3d5f4f,#a9bf9c)"><figcaption>숲길의 오후</figcaption></figure>
+      <figure class="ph d soon-img" role="img" aria-label="노을 속 주차장 (사진 준비 중)" style="--g:linear-gradient(170deg,#c98f5a,#3a2f3d)"><figcaption>노을 속 주차장 <small>(사진 준비 중)</small></figcaption></figure>
+      <figure class="ph e soon-img" role="img" aria-label="비 온 뒤 앞유리 (사진 준비 중)" style="--g:linear-gradient(190deg,#9fb6c4,#53697a)"><figcaption>비 온 뒤 앞유리 <small>(사진 준비 중)</small></figcaption></figure>
+      <figure class="ph f soon-img" role="img" aria-label="밤의 고속도로를 한참 달린 뒤 (사진 준비 중)" style="--g:linear-gradient(100deg,#141b26,#3b4a63 55%,#d99a2b)"><figcaption>밤의 고속도로, 한참 달린 뒤 <small>(사진 준비 중)</small></figcaption></figure>
     </div>
   </section>
 
@@ -172,9 +242,31 @@
       <p class="note">주기는 일반적인 참고값입니다. 정확한 시기는 내 차 매뉴얼과 정비소 안내를 우선하세요.</p>
     </div>
   </section>
+
+  <section id="faq">
+    <h2>자주 묻는 질문</h2>
+    <p class="lead">드라이브 코스와 차량 관리에 대해 자주 받는 질문을 모았습니다.</p>
+    <div class="courses">
+      <details>
+        <summary><strong>서울 근교 야경 드라이브 코스를 추천한다면?</strong><span>FAQ</span></summary>
+        <p>북악스카이웨이가 도심에서 가장 가깝습니다. 해가 진 뒤 서울의 불빛이 켜지는 시간대가 좋고, 주말 저녁은 붐비니 평일을 추천합니다.</p>
+      </details>
+      <details>
+        <summary><strong>엔진오일은 몇 km마다 교체하나요?</strong><span>FAQ</span></summary>
+        <p>일반적인 참고 주기는 약 8,000km입니다. 다만 주행 환경에 따라 달라지니, 정확한 시기는 차량 매뉴얼과 정비소 안내를 우선하세요. 위 '차량 관리' 표에 현재 주행거리를 넣으면 다음 교체 시기를 계산해 줍니다.</p>
+      </details>
+      <details>
+        <summary><strong>하루 코스로 좋은 장거리 드라이브는?</strong><span>FAQ</span></summary>
+        <p>동해안 7번 국도가 대표적입니다. 창밖으로 바다가 계속 이어지며, 중간중간 내려서 걷는 시간을 넉넉히 잡는 편이 더 오래 기억에 남습니다.</p>
+      </details>
+    </div>
+  </section>
 </main>
 
-<footer>오늘도 안전하게, 좋은 길 위에서.</footer>
+<footer>
+  <p>오늘도 안전하게, 좋은 길 위에서.</p>
+  <p style="font-style:normal;font-size:13px;opacity:.8">글·사진 bbirubbiru · 최종 업데이트 <time datetime="2026-10-19">2026년 10월</time></p>
+</footer>
 
 <script>
 (() => {
@@ -207,6 +299,7 @@
       const last = parseInt(data.last[i], 10);
       const cell = document.getElementById('s' + i);
       if (isNaN(cur) || isNaN(last)) { cell.className = ''; cell.textContent = '—'; return; }
+      if (last > cur) { cell.className = 'soon'; cell.textContent = '교체 거리가 현재 주행거리보다 큽니다'; return; }
       const remain = last + it.km - cur;
       if (remain < 0) { cell.className = 'over'; cell.textContent = `${Math.abs(remain).toLocaleString()} km 지남`; }
       else if (remain <= it.km * 0.15) { cell.className = 'soon'; cell.textContent = `곧 교체 · ${remain.toLocaleString()} km 남음`; }
