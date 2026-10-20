@@ -418,17 +418,19 @@
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
 
-  // ===== 의사 3D 파라미터 =====
-  const CAM_H = 1650;          // 카메라(운전자 눈) 높이
-  const CAM_D = 0.78;          // 카메라 깊이(시야)
+  // ===== 의사 3D 파라미터 (OutRun식 표준 스케일) =====
+  const CAM_H = 270;           // 카메라(운전자 눈) 높이 (월드 Y) — 도로가 화면에 꽉 차게
+  const CAM_D = 1 / Math.tan((90 / 2) * Math.PI / 180) * 0.9; // 시야각 기반 카메라 깊이
   const SEG = 200;             // 세그먼트 z 길이
   const ROAD_WIDTH = 2000;     // 도로 반폭
-  const DRAW_DIST = 240;       // 그릴 세그먼트 수
-  const HORIZON = H * 0.40;    // 지평선 기준 y
+  const DRAW_DIST = 160;       // 그릴 세그먼트 수
+  const HORIZON = H * 0.42;    // 지평선 기준 y
   const LANES = 3;
 
   // ===== 트랙 데이터 (커브 + 언덕) =====
   // 각 세그먼트의 커브 세기와 높이를 미리 생성 → 그리기와 물리가 동일 데이터를 공유
+  const CURVE_SCALE = 22;      // 커브 누적 스케일
+  const HILL_SCALE = 1.1;      // 언덕 스케일
   const TRACK_LEN = 2400;
   const track = [];
   (function buildTrack() {
@@ -497,37 +499,39 @@
     loop();
   }
 
-  // 특정 z까지의 누적 커브 오프셋(월드 x) — 커브로 도로가 휘는 양
+  // 특정 z까지의 누적 커브 오프셋(월드 x) — drawRoad와 동일 스케일
   function curveOffsetAt(z) {
     const baseSeg = Math.floor(position / SEG);
-    const steps = Math.max(0, Math.floor(z / SEG));
+    const steps = Math.max(0, Math.floor((z + (position % SEG)) / SEG));
     let dx = 0, ddx = 0;
     for (let n = 0; n < steps; n++) {
-      ddx += trackAt(baseSeg + n).curve;
+      ddx += trackAt(baseSeg + n).curve * CURVE_SCALE;
       dx += ddx;
     }
     return dx;
   }
-  // 특정 z의 도로 높이(언덕)
+  // 특정 z의 도로 높이(언덕) — drawRoad와 동일 스케일
   function hillAt(z) {
     const baseSeg = Math.floor(position / SEG);
-    const steps = Math.max(0, Math.floor(z / SEG));
+    const steps = Math.max(0, Math.floor((z + (position % SEG)) / SEG));
     let y = 0;
-    for (let n = 0; n < steps; n++) y += trackAt(baseSeg + n).hill * 0.02;
-    return y;
+    for (let n = 0; n < steps; n++) y += trackAt(baseSeg + n).hill;
+    return y * HILL_SCALE;
   }
 
-  // 월드 좌표(x, y: 높이, z: 거리) → 화면 투영
-  function project(x, y, z) {
-    const scale = CAM_D / Math.max(z, 1);
+  // 표준 pseudo-3D 투영 (OutRun식)
+  // worldX: 도로 중심 기준 월드 x, worldY: 도로 높이, z: 카메라로부터 거리(>0)
+  function project(worldX, worldY, z) {
+    const camZ = Math.max(z, 1);
+    const scale = CAM_D / camZ;                 // 원근 스케일
     return {
-      x: W / 2 + scale * x * (W / 2),
-      y: HORIZON - scale * (y - CAM_H + playerHill) * (H / 2) / 1000,
-      w: scale * ROAD_WIDTH * (W / 2),
+      x: Math.round(W / 2 + scale * worldX * W / 2),
+      y: Math.round(HORIZON - scale * (worldY - CAM_H) * H / 2),
+      w: scale * ROAD_WIDTH * W / 2,
       scale
     };
   }
-  let playerHill = 0;          // 현재 플레이어 위치의 언덕 높이(카메라 상하)
+  let playerHill = 0;          // (미사용 보존)
 
   function shade(hex, amt) {
     const n = parseInt(hex.slice(1), 16);
@@ -562,51 +566,49 @@
     ctx.lineTo(W, HORIZON); ctx.closePath(); ctx.fill();
   }
 
-  // ===== 도로(트랙 데이터 기반: 커브 + 언덕 + 속도감) =====
+  // ===== 도로(트랙 데이터 기반: 커브 + 언덕) =====
   function drawRoad() {
     const baseSeg = Math.floor(position / SEG);
-    const segFrac = (position % SEG) / SEG;
-    let maxY = H;
 
-    // 누적 커브/언덕을 먼 쪽부터 역산하지 않고, 가까운 쪽부터 적분
-    // 각 세그먼트 경계의 월드 x(dx), 높이(hy)를 순차 계산
-    const xs = [], ys = [], ws = [], scr = [];
+    // 각 세그먼트 경계를 먼 쪽부터 가까운 쪽으로 투영 좌표 계산
+    const xs = [], ys = [], ws = [];
     let dx = 0, ddx = 0, hy = 0;
     for (let n = 0; n <= DRAW_DIST; n++) {
       const seg = trackAt(baseSeg + n);
-      const z = n * SEG - (position % SEG);
-      const p = project(-playerX * ROAD_WIDTH + dx, hy, Math.max(z, 1));
-      xs[n] = p.x; ys[n] = p.y; ws[n] = p.w; scr[n] = p.scale;
-      ddx += seg.curve; dx += ddx; hy += seg.hill * 0.02;
+      const z = n * SEG - (position % SEG) + SEG;     // 1세그 앞에서 시작(바로 앞 도로 확보)
+      const p = project(-playerX * ROAD_WIDTH + dx, hy * HILL_SCALE, Math.max(z, 1));
+      xs[n] = p.x; ys[n] = p.y; ws[n] = p.w;
+      ddx += seg.curve * CURVE_SCALE;
+      dx += ddx;
+      hy += seg.hill;
     }
 
-    for (let n = DRAW_DIST; n > 0; n--) {
-      const seg = trackAt(baseSeg + n);
-      const x1 = xs[n], y1 = ys[n], w1 = ws[n];
-      const x2 = xs[n-1], y2 = ys[n-1], w2 = ws[n-1];
-      if (y1 >= maxY || w1 <= 0) continue;
-      maxY = y1;
+    // 먼 세그먼트(n 큰 쪽)부터 그려 가까운 쪽이 위에 겹치게
+    for (let n = DRAW_DIST - 1; n >= 0; n--) {
+      const x1 = xs[n + 1], y1 = ys[n + 1], w1 = ws[n + 1];  // 먼 경계
+      const x2 = xs[n],     y2 = ys[n],     w2 = ws[n];      // 가까운 경계
+      if (w2 <= 0) continue;
       const segIndex = baseSeg + n;
       const dark = (segIndex % 2) === 0;
 
-      // 잔디/둔치 (언덕 반영)
+      // 잔디/둔치
       ctx.fillStyle = dark ? '#3a564a' : '#43604e';
-      ctx.fillRect(0, y2, W, y1 - y2 + 1);
-      // 도로
-      ctx.fillStyle = dark ? '#2b2f36' : '#31353d';
+      ctx.fillRect(0, y1, W, (y2 - y1) + 1);
+      // 도로 본체
+      ctx.fillStyle = dark ? '#2f343c' : '#363b44';
       trapezoid(x1, y1, w1, x2, y2, w2);
-      // 갓길(빨강/흰 럼블스트립)
+      // 갓길(럼블스트립)
       ctx.fillStyle = dark ? '#c9412f' : '#e9e3d2';
-      trapezoid(x1, y1, w1 * 1.07, x2, y2, w2 * 1.07);
-      ctx.fillStyle = dark ? '#2b2f36' : '#31353d';
+      trapezoid(x1, y1, w1 * 1.08, x2, y2, w2 * 1.08);
+      ctx.fillStyle = dark ? '#2f343c' : '#363b44';
       trapezoid(x1, y1, w1, x2, y2, w2);
       // 중앙 차선 점선
       if (dark) {
-        ctx.fillStyle = 'rgba(241,234,213,.9)';
+        ctx.fillStyle = 'rgba(241,234,213,.92)';
         for (let l = 1; l < LANES; l++) {
           const off = (l / LANES - 0.5) * 2;
           const lx1 = x1 + off * w1, lx2 = x2 + off * w2;
-          trapezoid(lx1, y1, w1 * 0.028, lx2, y2, w2 * 0.028);
+          trapezoid(lx1, y1, w1 * 0.03, lx2, y2, w2 * 0.03);
         }
       }
     }
@@ -846,23 +848,21 @@
 
     // 커브 원심력 — 코너에서 바깥으로 밀려남(빠를수록 강함)
     const nowCurve = trackAt(Math.floor(position / SEG)).curve;
-    playerX -= nowCurve * spdRatio * 0.0012;
+    playerX -= nowCurve * spdRatio * 0.009;
     // 도로 밖이면 감속(잔디 저항)
     if (Math.abs(playerX) > 1.0) { speed = Math.max(CRUISE * 0.35, speed - SEG * 0.08); }
     playerX = Math.max(-1.4, Math.min(1.4, playerX));
 
     position += speed;
-    // 현재 언덕 높이(카메라 상하 보정)
-    playerHill = (playerHill * 0.85) + (trackAt(Math.floor(position / SEG)).hill * 0.02 * 6) * 0.15;
     roadTime += speed;
     score = Math.max(0, Math.floor(position / SEG) + bonus);
     if (invuln > 0) invuln--;
 
-    // 적 차 스폰 — 개수 줄임(간격 넓게), 먼 z에 생성해 작게 등장
-    if (position + 11000 > spawnZ) {
+    // 적 차 스폰 — 매우 한산하게(간격 크게), 먼 z에 생성해 작게 등장
+    if (position + 13000 > spawnZ) {
       const lane = (Math.floor(Math.random() * LANES) - 1) * 0.62;
-      enemies.push({ z: spawnZ + 9000, x: lane, brand: BRANDS[Math.floor(Math.random()*BRANDS.length)], hit: false, rot: 0, offx: 0, spin: 0, vy: 0 });
-      spawnZ += 2600 + Math.random() * 2600;   // 간격 2배 이상 넓힘 → 한산한 드라이브
+      enemies.push({ z: spawnZ + 11000, x: lane, brand: BRANDS[Math.floor(Math.random()*BRANDS.length)], hit: false, rot: 0, offx: 0, spin: 0, vy: 0 });
+      spawnZ += 5000 + Math.random() * 4000;   // 간격 대폭 확대 → 드물게 등장
     }
 
     // 길가 사물 스폰 — 양옆 번갈아, 가로수 위주 + 가끔 가로등
