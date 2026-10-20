@@ -419,13 +419,39 @@
   const W = canvas.width, H = canvas.height;
 
   // ===== 의사 3D 파라미터 =====
-  const CAM_H = 1700;          // 카메라(운전자 눈) 높이 — 높일수록 위에서 내려다봄
+  const CAM_H = 1650;          // 카메라(운전자 눈) 높이
   const CAM_D = 0.78;          // 카메라 깊이(시야)
   const SEG = 200;             // 세그먼트 z 길이
   const ROAD_WIDTH = 2000;     // 도로 반폭
-  const DRAW_DIST = 220;       // 그릴 세그먼트 수(멀리까지 = 차가 작게 등장)
-  const HORIZON = H * 0.40;    // 지평선 y
+  const DRAW_DIST = 240;       // 그릴 세그먼트 수
+  const HORIZON = H * 0.40;    // 지평선 기준 y
   const LANES = 3;
+
+  // ===== 트랙 데이터 (커브 + 언덕) =====
+  // 각 세그먼트의 커브 세기와 높이를 미리 생성 → 그리기와 물리가 동일 데이터를 공유
+  const TRACK_LEN = 2400;
+  const track = [];
+  (function buildTrack() {
+    let i = 0;
+    function add(count, curve, hill) {
+      for (let k = 0; k < count; k++) {
+        const t = k / count;
+        const ease = t < 0.5 ? (t * 2) * (t * 2) / 2 : 1 - Math.pow((1 - t) * 2, 2) / 2; // S자 보간
+        track.push({ curve: curve * ease, hill: hill });
+        i++;
+      }
+    }
+    while (track.length < TRACK_LEN) {
+      add(40, 0, 0);                                   // 직선 (쉬어가는 구간)
+      add(50, 2.2, 400);                               // 완만한 우커브 + 오르막
+      add(30, 0, -300);                                // 짧은 직선 내리막
+      add(55, -3.4, 0);                                // 급한 좌커브
+      add(35, 0, 500);                                 // 오르막 직선
+      add(50, 2.8, -400);                              // 우커브 내리막
+      add(45, -2.0, 200);                              // 완만한 좌커브
+    }
+  })();
+  const trackAt = i => track[((i % TRACK_LEN) + TRACK_LEN) % TRACK_LEN];
 
   // ===== 입력 =====
   const keys = { left: false, right: false, gas: false, brake: false };
@@ -437,17 +463,19 @@
   let playerX = 0;             // -1 ~ 1 (도로 중앙 기준)
   let position = 0;           // 주행 누적 z
   let speed = 0;              // 현재 속도
-  const MAX_SPEED = SEG * 3.0; // 속도 상향
-  const CRUISE = SEG * 0.9;
+  const MAX_SPEED = SEG * 3.4; // 최고속도
+  const CRUISE = SEG * 0.8;
   let score = 0, best = 0;
   let bonus = 0;               // 쳐내기/차감 누적 보너스(±)
   let lives = 5;               // 목숨
   let invuln = 0;              // 피격 후 무적 프레임
   try { best = parseInt(localStorage.getItem('roadnote-game-best') || '0', 10) || 0; } catch (e) {}
   let enemies = [];
-  let spawnZ = 0;
+  let props = [];              // 길가 사물(가로수/가로등/표지판)
+  let spawnZ = 0, propZ = 0;
   let steerVis = 0;            // 핸들 시각 각도
   let paddle = 0;              // 패들시프트 당김(+1 다운/브레이크, -1 업/엑셀)
+  let roadTime = 0;            // 노면 줄무늬 애니메이션용
 
   // 제조사별 차종 프리셋 (기아/현대/제네시스/쉐보레/르노 등)
   const BRANDS = [
@@ -462,21 +490,44 @@
 
   function reset() {
     playerX = 0; position = 0; speed = CRUISE;
-    score = 0; bonus = 0; lives = 5; invuln = 0; enemies = []; spawnZ = 1500;
+    score = 0; bonus = 0; lives = 5; invuln = 0;
+    enemies = []; props = []; spawnZ = 4000; propZ = 1200;
+    playerHill = 0; roadTime = 0;
     over = false; running = true;
     loop();
   }
 
-  // 월드 좌표(x: -ROAD_WIDTH~, y: 높이, z: 거리) → 화면 투영
+  // 특정 z까지의 누적 커브 오프셋(월드 x) — 커브로 도로가 휘는 양
+  function curveOffsetAt(z) {
+    const baseSeg = Math.floor(position / SEG);
+    const steps = Math.max(0, Math.floor(z / SEG));
+    let dx = 0, ddx = 0;
+    for (let n = 0; n < steps; n++) {
+      ddx += trackAt(baseSeg + n).curve;
+      dx += ddx;
+    }
+    return dx;
+  }
+  // 특정 z의 도로 높이(언덕)
+  function hillAt(z) {
+    const baseSeg = Math.floor(position / SEG);
+    const steps = Math.max(0, Math.floor(z / SEG));
+    let y = 0;
+    for (let n = 0; n < steps; n++) y += trackAt(baseSeg + n).hill * 0.02;
+    return y;
+  }
+
+  // 월드 좌표(x, y: 높이, z: 거리) → 화면 투영
   function project(x, y, z) {
     const scale = CAM_D / Math.max(z, 1);
     return {
       x: W / 2 + scale * x * (W / 2),
-      y: HORIZON - scale * (y - CAM_H) * (H / 2) / 1000,
+      y: HORIZON - scale * (y - CAM_H + playerHill) * (H / 2) / 1000,
       w: scale * ROAD_WIDTH * (W / 2),
       scale
     };
   }
+  let playerHill = 0;          // 현재 플레이어 위치의 언덕 높이(카메라 상하)
 
   function shade(hex, amt) {
     const n = parseInt(hex.slice(1), 16);
@@ -511,42 +562,51 @@
     ctx.lineTo(W, HORIZON); ctx.closePath(); ctx.fill();
   }
 
-  // ===== 도로(세그먼트 원근) =====
+  // ===== 도로(트랙 데이터 기반: 커브 + 언덕 + 속도감) =====
   function drawRoad() {
     const baseSeg = Math.floor(position / SEG);
+    const segFrac = (position % SEG) / SEG;
     let maxY = H;
-    for (let n = DRAW_DIST; n > 0; n--) {
-      const segIndex = baseSeg + n;
-      const z1 = (segIndex) * SEG - position;
-      const z2 = (segIndex + 1) * SEG - position;
-      if (z2 <= 0) continue;
-      // 완만한 굽이(사인)로 생동감
-      const curve1 = Math.sin(segIndex * 0.06) * 700;
-      const curve2 = Math.sin((segIndex + 1) * 0.06) * 700;
-      const p1 = project(-playerX * ROAD_WIDTH + curve1, 0, z1);
-      const p2 = project(-playerX * ROAD_WIDTH + curve2, 0, z2);
-      if (p1.y >= maxY) continue;
-      maxY = p1.y;
 
+    // 누적 커브/언덕을 먼 쪽부터 역산하지 않고, 가까운 쪽부터 적분
+    // 각 세그먼트 경계의 월드 x(dx), 높이(hy)를 순차 계산
+    const xs = [], ys = [], ws = [], scr = [];
+    let dx = 0, ddx = 0, hy = 0;
+    for (let n = 0; n <= DRAW_DIST; n++) {
+      const seg = trackAt(baseSeg + n);
+      const z = n * SEG - (position % SEG);
+      const p = project(-playerX * ROAD_WIDTH + dx, hy, Math.max(z, 1));
+      xs[n] = p.x; ys[n] = p.y; ws[n] = p.w; scr[n] = p.scale;
+      ddx += seg.curve; dx += ddx; hy += seg.hill * 0.02;
+    }
+
+    for (let n = DRAW_DIST; n > 0; n--) {
+      const seg = trackAt(baseSeg + n);
+      const x1 = xs[n], y1 = ys[n], w1 = ws[n];
+      const x2 = xs[n-1], y2 = ys[n-1], w2 = ws[n-1];
+      if (y1 >= maxY || w1 <= 0) continue;
+      maxY = y1;
+      const segIndex = baseSeg + n;
       const dark = (segIndex % 2) === 0;
-      // 잔디/둔치
-      ctx.fillStyle = dark ? '#3c584a' : '#45624f';
-      ctx.fillRect(0, p2.y, W, p1.y - p2.y + 1);
+
+      // 잔디/둔치 (언덕 반영)
+      ctx.fillStyle = dark ? '#3a564a' : '#43604e';
+      ctx.fillRect(0, y2, W, y1 - y2 + 1);
       // 도로
       ctx.fillStyle = dark ? '#2b2f36' : '#31353d';
-      trapezoid(p1.x, p1.y, p1.w, p2.x, p2.y, p2.w);
-      // 갓길
+      trapezoid(x1, y1, w1, x2, y2, w2);
+      // 갓길(빨강/흰 럼블스트립)
       ctx.fillStyle = dark ? '#c9412f' : '#e9e3d2';
-      trapezoid(p1.x, p1.y, p1.w * 1.06, p2.x, p2.y, p2.w * 1.06, true);
+      trapezoid(x1, y1, w1 * 1.07, x2, y2, w2 * 1.07);
       ctx.fillStyle = dark ? '#2b2f36' : '#31353d';
-      trapezoid(p1.x, p1.y, p1.w, p2.x, p2.y, p2.w);
-      // 차선
+      trapezoid(x1, y1, w1, x2, y2, w2);
+      // 중앙 차선 점선
       if (dark) {
         ctx.fillStyle = 'rgba(241,234,213,.9)';
         for (let l = 1; l < LANES; l++) {
-          const off = (l / LANES - 0.5) * 2;   // -.33, .33 ...
-          const lx1 = p1.x + off * p1.w, lx2 = p2.x + off * p2.w;
-          trapezoid(lx1, p1.y, p1.w * 0.03, lx2, p2.y, p2.w * 0.03);
+          const off = (l / LANES - 0.5) * 2;
+          const lx1 = x1 + off * w1, lx2 = x2 + off * w2;
+          trapezoid(lx1, y1, w1 * 0.028, lx2, y2, w2 * 0.028);
         }
       }
     }
@@ -585,8 +645,9 @@
   function drawEnemy(e) {
     const z = e.z - position;
     if (z <= 0) return;
-    const curve = Math.sin((position + z) / SEG * 0.06) * 700;
-    const p = project(-playerX * ROAD_WIDTH + curve + e.x * ROAD_WIDTH, 0, z);
+    const dx = curveOffsetAt(z);
+    const hy = hillAt(z);
+    const p = project(-playerX * ROAD_WIDTH + dx + e.x * ROAD_WIDTH, hy, z);
     const cw = Math.max(5, p.w * 0.46);
     const ch = cw * 0.9;
     let cx = p.x + (e.hit ? e.offx * p.scale * 1400 : 0);
@@ -632,6 +693,43 @@
     // 엠블럼 (충분히 클 때만)
     if (cw > 26) { ctx.save(); ctx.translate(0, hh * 0.08); drawEmblem(b.emblem, cw); ctx.restore(); }
     ctx.restore();
+  }
+
+  // ===== 길가 사물(가로수/가로등) — 속도감과 몰입 =====
+  function drawProp(pr) {
+    const z = pr.z - position;
+    if (z <= 0) return;
+    const dx = curveOffsetAt(z);
+    const hy = hillAt(z);
+    // 도로 바깥쪽(side: -1 왼, +1 오른)
+    const worldX = -playerX * ROAD_WIDTH + dx + pr.side * ROAD_WIDTH * 1.5;
+    const p = project(worldX, hy, z);
+    if (p.scale <= 0) return;
+    const sc = p.scale * 2600;
+    if (pr.type === 'tree') {
+      const trunkH = sc * 0.5, crownR = sc * 0.45;
+      if (crownR < 0.5) return;
+      // 그림자
+      ctx.fillStyle = 'rgba(0,0,0,.2)';
+      ctx.beginPath(); ctx.ellipse(p.x, p.y, crownR * 0.9, crownR * 0.2, 0, 0, Math.PI*2); ctx.fill();
+      // 기둥
+      ctx.fillStyle = '#4a3a2a'; ctx.fillRect(p.x - sc*0.04, p.y - trunkH, sc*0.08, trunkH);
+      // 수관 (해질녘 톤)
+      const cg = ctx.createRadialGradient(p.x - crownR*0.3, p.y - trunkH - crownR*0.3, crownR*0.2, p.x, p.y - trunkH, crownR);
+      cg.addColorStop(0, '#5c7a4e'); cg.addColorStop(1, '#324a30');
+      ctx.fillStyle = cg;
+      ctx.beginPath(); ctx.arc(p.x, p.y - trunkH - crownR*0.4, crownR, 0, Math.PI*2); ctx.fill();
+    } else { // 가로등
+      const poleH = sc * 0.8;
+      if (poleH < 1) return;
+      ctx.strokeStyle = '#3a4149'; ctx.lineWidth = Math.max(1, sc*0.05);
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, p.y - poleH);
+      ctx.lineTo(p.x + pr.side * -sc*0.18, p.y - poleH); ctx.stroke();
+      // 등불
+      ctx.fillStyle = '#ffe7a8'; ctx.shadowColor = '#ffdf8a'; ctx.shadowBlur = sc*0.25;
+      ctx.beginPath(); ctx.arc(p.x + pr.side * -sc*0.18, p.y - poleH, Math.max(1, sc*0.07), 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
   }
 
   // ===== 운전석(CLE 쿠페 대시보드/보닛/핸들) =====
@@ -739,22 +837,42 @@
     pedalGas.classList.toggle('active', keys.gas);
     pedalBrake.classList.toggle('active', keys.brake);
 
-    const steer = 0.013 + speed / MAX_SPEED * 0.004;
-    if (keys.left) { playerX -= steer; steerVis += (-1 - steerVis) * 0.2; }
-    else if (keys.right) { playerX += steer; steerVis += (1 - steerVis) * 0.2; }
-    else steerVis += (0 - steerVis) * 0.2;
-    playerX = Math.max(-1.1, Math.min(1.1, playerX));
+    // 조향 (속도 비례, 관성 느낌)
+    const spdRatio = speed / MAX_SPEED;
+    const steer = 0.010 + spdRatio * 0.006;
+    if (keys.left) { playerX -= steer; steerVis += (-1 - steerVis) * 0.18; }
+    else if (keys.right) { playerX += steer; steerVis += (1 - steerVis) * 0.18; }
+    else steerVis += (0 - steerVis) * 0.15;
+
+    // 커브 원심력 — 코너에서 바깥으로 밀려남(빠를수록 강함)
+    const nowCurve = trackAt(Math.floor(position / SEG)).curve;
+    playerX -= nowCurve * spdRatio * 0.0012;
+    // 도로 밖이면 감속(잔디 저항)
+    if (Math.abs(playerX) > 1.0) { speed = Math.max(CRUISE * 0.35, speed - SEG * 0.08); }
+    playerX = Math.max(-1.4, Math.min(1.4, playerX));
 
     position += speed;
+    // 현재 언덕 높이(카메라 상하 보정)
+    playerHill = (playerHill * 0.85) + (trackAt(Math.floor(position / SEG)).hill * 0.02 * 6) * 0.15;
+    roadTime += speed;
     score = Math.max(0, Math.floor(position / SEG) + bonus);
     if (invuln > 0) invuln--;
 
-    // 스폰 — 아주 먼 z에 생성해 처음부터 작게 보이게
-    if (position + 9000 > spawnZ) {
+    // 적 차 스폰 — 개수 줄임(간격 넓게), 먼 z에 생성해 작게 등장
+    if (position + 11000 > spawnZ) {
       const lane = (Math.floor(Math.random() * LANES) - 1) * 0.62;
-      enemies.push({ z: spawnZ + 7000, x: lane, brand: BRANDS[Math.floor(Math.random()*BRANDS.length)], hit: false, rot: 0, offx: 0, spin: 0, vy: 0 });
-      spawnZ += 1100 + Math.random() * 1100;
+      enemies.push({ z: spawnZ + 9000, x: lane, brand: BRANDS[Math.floor(Math.random()*BRANDS.length)], hit: false, rot: 0, offx: 0, spin: 0, vy: 0 });
+      spawnZ += 2600 + Math.random() * 2600;   // 간격 2배 이상 넓힘 → 한산한 드라이브
     }
+
+    // 길가 사물 스폰 — 양옆 번갈아, 가로수 위주 + 가끔 가로등
+    if (position + 11000 > propZ) {
+      const type = Math.random() < 0.72 ? 'tree' : 'lamp';
+      props.push({ z: propZ + 9000, side: Math.random() < 0.5 ? -1 : 1, type });
+      props.push({ z: propZ + 9000 + 160, side: Math.random() < 0.5 ? -1 : 1, type: Math.random() < 0.72 ? 'tree' : 'lamp' });
+      propZ += 520 + Math.random() * 360;
+    }
+    props = props.filter(pr => (pr.z - position) > -300 && (pr.z - position) < 70000);
 
     // 충돌/정리
     for (const e of enemies) {
@@ -791,13 +909,37 @@
   function draw() {
     drawSky();
     drawRoad();
-    // 먼 것부터 그리기 위해 z 내림차순 정렬
-    enemies.slice().sort((a, b) => (b.z) - (a.z)).forEach(drawEnemy);
+    // 길가 사물 + 적 차를 z 내림차순(먼 것 먼저)으로 함께 정렬해 그림
+    const scene = [];
+    props.forEach(pr => scene.push({ z: pr.z, kind: 'prop', ref: pr }));
+    enemies.forEach(e => scene.push({ z: e.z, kind: 'enemy', ref: e }));
+    scene.sort((a, b) => b.z - a.z).forEach(s => s.kind === 'prop' ? drawProp(s.ref) : drawEnemy(s.ref));
+    // 속도선 — 빠를수록 가장자리에서 중앙으로 흐르는 모션 블러
+    drawSpeedLines();
     drawCockpit();
     drawHUD();
     // 피격 무적 중 화면 빨간 플래시
     if (invuln > 0 && (invuln % 10) < 5) {
       ctx.fillStyle = 'rgba(179,50,31,.18)'; ctx.fillRect(0, 0, W, H);
+    }
+  }
+
+  // 속도감: 화면 가장자리에서 흐르는 선 (빠를 때만)
+  function drawSpeedLines() {
+    const spd = speed / MAX_SPEED;
+    if (spd < 0.5) return;
+    const alpha = (spd - 0.5) / 0.5 * 0.28;
+    ctx.strokeStyle = `rgba(255,245,220,${alpha})`;
+    ctx.lineWidth = 2;
+    const cx = W / 2, cy = HORIZON;
+    for (let i = 0; i < 14; i++) {
+      const ang = (i / 14) * Math.PI * 2 + (roadTime * 0.001);
+      const r0 = 120 + ((roadTime * 0.6 + i * 80) % 240);
+      const r1 = r0 + 40 * spd;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(ang) * r0 * 2.2, cy + Math.sin(ang) * r0);
+      ctx.lineTo(cx + Math.cos(ang) * r1 * 2.2, cy + Math.sin(ang) * r1);
+      ctx.stroke();
     }
   }
 
