@@ -419,12 +419,12 @@
   const W = canvas.width, H = canvas.height;
 
   // ===== 의사 3D 파라미터 =====
-  const CAM_H = 1000;          // 카메라(운전자 눈) 높이
-  const CAM_D = 0.84;          // 카메라 깊이(시야). 작을수록 넓은 화각
+  const CAM_H = 1700;          // 카메라(운전자 눈) 높이 — 높일수록 위에서 내려다봄
+  const CAM_D = 0.78;          // 카메라 깊이(시야)
   const SEG = 200;             // 세그먼트 z 길이
   const ROAD_WIDTH = 2000;     // 도로 반폭
-  const DRAW_DIST = 160;       // 그릴 세그먼트 수
-  const HORIZON = H * 0.42;    // 지평선 y
+  const DRAW_DIST = 220;       // 그릴 세그먼트 수(멀리까지 = 차가 작게 등장)
+  const HORIZON = H * 0.40;    // 지평선 y
   const LANES = 3;
 
   // ===== 입력 =====
@@ -437,19 +437,32 @@
   let playerX = 0;             // -1 ~ 1 (도로 중앙 기준)
   let position = 0;           // 주행 누적 z
   let speed = 0;              // 현재 속도
-  const MAX_SPEED = SEG * 1.9;
-  const CRUISE = SEG * 0.55;
+  const MAX_SPEED = SEG * 3.0; // 속도 상향
+  const CRUISE = SEG * 0.9;
   let score = 0, best = 0;
+  let bonus = 0;               // 쳐내기/차감 누적 보너스(±)
+  let lives = 5;               // 목숨
+  let invuln = 0;              // 피격 후 무적 프레임
   try { best = parseInt(localStorage.getItem('roadnote-game-best') || '0', 10) || 0; } catch (e) {}
   let enemies = [];
   let spawnZ = 0;
-  let steerVis = 0;           // 핸들 시각 각도
+  let steerVis = 0;            // 핸들 시각 각도
+  let paddle = 0;              // 패들시프트 당김(+1 다운/브레이크, -1 업/엑셀)
 
-  const ENEMY_COLORS = ['#c0392b', '#2e5a86', '#4a4a4a', '#7a6a3a', '#355f4d', '#b8842a'];
+  // 제조사별 차종 프리셋 (기아/현대/제네시스/쉐보레/르노 등)
+  const BRANDS = [
+    { name: 'KIA',     color: '#b1382f', roof: '#9c2f27', emblem: 'kia' },
+    { name: 'HYUNDAI', color: '#2f5f8a', roof: '#274f73', emblem: 'h' },
+    { name: 'GENESIS', color: '#30363d', roof: '#232a30', emblem: 'wing' },
+    { name: 'CHEVY',   color: '#c9a23a', roof: '#ad8a30', emblem: 'bowtie' },
+    { name: 'RENAULT', color: '#c8762a', roof: '#ad6523', emblem: 'diamond' },
+    { name: 'KIA',     color: '#3a7a5a', roof: '#316a4d', emblem: 'kia' },
+    { name: 'HYUNDAI', color: '#8a8f96', roof: '#767b82', emblem: 'h' }
+  ];
 
   function reset() {
     playerX = 0; position = 0; speed = CRUISE;
-    score = 0; enemies = []; spawnZ = 1500;
+    score = 0; bonus = 0; lives = 5; invuln = 0; enemies = []; spawnZ = 1500;
     over = false; running = true;
     loop();
   }
@@ -545,33 +558,79 @@
     ctx.closePath(); ctx.fill();
   }
 
-  // ===== 적 차량(뒤에서 본 모습, 원근 스케일) =====
+  // 제조사 엠블럼
+  function drawEmblem(type, cw) {
+    const s = cw * 0.1;
+    ctx.save();
+    ctx.lineWidth = Math.max(1, s * 0.18);
+    ctx.strokeStyle = 'rgba(235,240,244,.85)';
+    ctx.fillStyle = 'rgba(235,240,244,.85)';
+    if (type === 'kia') {
+      ctx.font = `700 ${Math.max(5, cw*0.18)}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText('KIA', 0, s * 0.5);
+    } else if (type === 'h') {
+      ctx.beginPath(); ctx.ellipse(0, 0, s, s * 0.7, 0, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-s*0.4,-s*0.4); ctx.lineTo(-s*0.4,s*0.4); ctx.moveTo(s*0.4,-s*0.4); ctx.lineTo(s*0.4,s*0.4); ctx.moveTo(-s*0.4,0); ctx.lineTo(s*0.4,0); ctx.stroke();
+    } else if (type === 'wing') {
+      ctx.beginPath(); ctx.moveTo(-s*1.4,0); ctx.quadraticCurveTo(0,-s*0.7,0,0); ctx.quadraticCurveTo(0,-s*0.7,s*1.4,0); ctx.stroke();
+    } else if (type === 'bowtie') {
+      ctx.beginPath(); ctx.moveTo(-s,-s*0.4); ctx.lineTo(s,s*0.4); ctx.lineTo(s,-s*0.4); ctx.lineTo(-s,s*0.4); ctx.closePath(); ctx.fill();
+    } else if (type === 'diamond') {
+      ctx.beginPath(); ctx.moveTo(0,-s); ctx.lineTo(s*0.7,0); ctx.lineTo(0,s); ctx.lineTo(-s*0.7,0); ctx.closePath(); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ===== 적 차량(뒤에서 본 입체 모습) =====
   function drawEnemy(e) {
     const z = e.z - position;
     if (z <= 0) return;
     const curve = Math.sin((position + z) / SEG * 0.06) * 700;
     const p = project(-playerX * ROAD_WIDTH + curve + e.x * ROAD_WIDTH, 0, z);
-    const cw = Math.max(8, p.w * 0.46) * (e.hit ? 1 : 1);
-    const ch = cw * 0.82;
+    const cw = Math.max(5, p.w * 0.46);
+    const ch = cw * 0.9;
     let cx = p.x + (e.hit ? e.offx * p.scale * 1400 : 0);
     const cy = p.y;
+    const b = e.brand;
     ctx.save();
     ctx.translate(cx, cy - ch * 0.5);
     if (e.hit) ctx.rotate(e.rot);
     const hw = cw / 2, hh = ch / 2;
-    // 그림자
-    ctx.fillStyle = 'rgba(0,0,0,.3)';
-    ctx.beginPath(); ctx.ellipse(0, hh * 0.9, hw * 0.95, hh * 0.22, 0, 0, Math.PI * 2); ctx.fill();
-    // 바디
-    const bg = ctx.createLinearGradient(0, -hh, 0, hh);
-    bg.addColorStop(0, shade(e.color, 18)); bg.addColorStop(1, shade(e.color, -24));
-    ctx.fillStyle = bg; roundRect(-hw, -hh, cw, ch, Math.max(3, cw * 0.12)); ctx.fill();
-    // 리어 윈도우
-    ctx.fillStyle = '#17222b'; roundRect(-hw * 0.74, -hh * 0.72, cw * 0.74, ch * 0.4, cw * 0.08); ctx.fill();
-    // 테일램프
-    ctx.fillStyle = '#ff5a4d';
-    roundRect(-hw * 0.9, hh * 0.28, cw * 0.26, ch * 0.16, 2); ctx.fill();
-    roundRect(hw * 0.64, hh * 0.28, cw * 0.26, ch * 0.16, 2); ctx.fill();
+
+    // 바닥 그림자
+    ctx.fillStyle = 'rgba(0,0,0,.32)';
+    ctx.beginPath(); ctx.ellipse(0, hh * 0.98, hw * 1.0, hh * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+
+    // ----- 3D 입체감: 트렁크면 / 지붕면 / 범퍼면을 분리해 음영 -----
+    // 지붕(윗면) — 밝게, 뒤로 기운 사다리꼴
+    ctx.fillStyle = shade(b.roof, 26);
+    ctx.beginPath();
+    ctx.moveTo(-hw * 0.64, -hh * 0.55); ctx.lineTo(hw * 0.64, -hh * 0.55);
+    ctx.lineTo(hw * 0.78, -hh * 0.1); ctx.lineTo(-hw * 0.78, -hh * 0.1); ctx.closePath(); ctx.fill();
+    // 리어 윈도우(유리)
+    const gg = ctx.createLinearGradient(0, -hh * 0.5, 0, -hh * 0.05);
+    gg.addColorStop(0, '#2b3b47'); gg.addColorStop(1, '#0f1920');
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.moveTo(-hw * 0.58, -hh * 0.5); ctx.lineTo(hw * 0.58, -hh * 0.5);
+    ctx.lineTo(hw * 0.7, -hh * 0.12); ctx.lineTo(-hw * 0.7, -hh * 0.12); ctx.closePath(); ctx.fill();
+    // 트렁크/바디 뒷면 — 좌우 그라데이션으로 둥근 입체
+    const bg = ctx.createLinearGradient(-hw, 0, hw, 0);
+    bg.addColorStop(0, shade(b.color, -34));
+    bg.addColorStop(.5, shade(b.color, 10));
+    bg.addColorStop(1, shade(b.color, -34));
+    ctx.fillStyle = bg;
+    roundRect(-hw, -hh * 0.12, cw, hh * 1.05, Math.max(2, cw * 0.1)); ctx.fill();
+    // 범퍼(아랫면) — 어둡게
+    ctx.fillStyle = shade(b.color, -48);
+    roundRect(-hw, hh * 0.6, cw, hh * 0.32, Math.max(2, cw * 0.08)); ctx.fill();
+    // 테일램프 (가로 바 — 요즘 차 느낌)
+    ctx.fillStyle = '#ff5147';
+    roundRect(-hw * 0.92, hh * 0.18, cw * 0.84, Math.max(1.5, ch * 0.08), 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,120,110,.5)';
+    roundRect(-hw * 0.5, hh * 0.18, cw * 0.4, Math.max(1.5, ch * 0.08), 2); ctx.fill();
+    // 엠블럼 (충분히 클 때만)
+    if (cw > 26) { ctx.save(); ctx.translate(0, hh * 0.08); drawEmblem(b.emblem, cw); ctx.restore(); }
     ctx.restore();
   }
 
@@ -602,14 +661,45 @@
     ctx.beginPath(); ctx.moveTo(W, 0); ctx.lineTo(W*0.86, 0); ctx.lineTo(W, H*0.5); ctx.closePath(); ctx.fill();
     // 스티어링 휠 (하단 중앙, 조향에 따라 회전)
     ctx.save();
-    ctx.translate(W * 0.5, H + 36);
+    ctx.translate(W * 0.5, H + 52);
     ctx.rotate(steerVis * 0.5);
-    ctx.strokeStyle = '#1a1f26'; ctx.lineWidth = 16;
-    ctx.beginPath(); ctx.arc(0, 0, 92, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke();
-    ctx.lineWidth = 10; ctx.strokeStyle = '#2a333d';
-    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -92); ctx.moveTo(0, 0); ctx.lineTo(-80, 30); ctx.moveTo(0, 0); ctx.lineTo(80, 30); ctx.stroke();
+
+    // ---- 패들시프트 (휠 뒤 좌우 레버) : paddle 값에 따라 당겨짐 ----
+    // 왼쪽(다운시프트=브레이크), 오른쪽(업시프트=엑셀)
+    const pull = Math.max(0, paddle), push = Math.max(0, -paddle);
+    ctx.save();
+    ctx.rotate(-steerVis * 0.5); // 패들은 휠 회전과 무관하게 고정감
+    // 오른쪽 패들(업 / 엑셀)
+    ctx.fillStyle = push > 0.05 ? '#2d6a5a' : '#39424c';
+    ctx.save(); ctx.translate(118, -70); ctx.rotate(-0.5 - push * 0.5);
+    roundRect(-8, -4, 56, 16, 6); ctx.fill(); ctx.restore();
+    // 왼쪽 패들(다운 / 브레이크)
+    ctx.fillStyle = pull > 0.05 ? '#b3321f' : '#39424c';
+    ctx.save(); ctx.translate(-118, -70); ctx.rotate(0.5 + pull * 0.5);
+    roundRect(-48, -4, 56, 16, 6); ctx.fill(); ctx.restore();
+    // 손(엄지) — 패들 당길 때 살짝 표시
+    ctx.fillStyle = 'rgba(224,196,160,.9)';
+    if (push > 0.05) { ctx.beginPath(); ctx.ellipse(104, -58, 11, 7, -0.5, 0, Math.PI*2); ctx.fill(); }
+    if (pull > 0.05) { ctx.beginPath(); ctx.ellipse(-104, -58, 11, 7, 0.5, 0, Math.PI*2); ctx.fill(); }
+    ctx.restore();
+
+    // 휠 림
+    ctx.strokeStyle = '#1a1f26'; ctx.lineWidth = 18;
+    ctx.beginPath(); ctx.arc(0, 0, 100, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = '#2a333d'; ctx.lineWidth = 12;
+    ctx.beginPath(); ctx.arc(0, 0, 100, 0, Math.PI * 2); ctx.stroke();
+    // 스포크
+    ctx.lineWidth = 11; ctx.strokeStyle = '#2a333d';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -100); ctx.moveTo(0, 0); ctx.lineTo(-88, 34); ctx.moveTo(0, 0); ctx.lineTo(88, 34); ctx.stroke();
+    // 양손 (10시·2시 방향)
+    ctx.fillStyle = 'rgba(214,186,150,.95)';
+    ctx.beginPath(); ctx.ellipse(-86, -48, 15, 22, 0.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(86, -48, 15, 22, -0.5, 0, Math.PI*2); ctx.fill();
     // 삼각별 센터
-    ctx.fillStyle = '#c9ccd0'; ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c9ccd0'; ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#6b7178'; ctx.lineWidth = 2; ctx.beginPath();
+    for (let a = 0; a < 3; a++) { const ang = -Math.PI/2 + a*(Math.PI*2/3); ctx.moveTo(0,0); ctx.lineTo(Math.cos(ang)*12, Math.sin(ang)*12); }
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -628,51 +718,67 @@
     ctx.fillStyle = '#e9edf0'; ctx.font = '500 14px "Noto Sans KR", sans-serif'; ctx.textAlign = 'left';
     ctx.fillText('점수 ' + score, 28, 34);
     ctx.fillText('속도 ' + Math.round(speed / SEG * 70) + ' km/h', 28, 56);
+    // 목숨(하트)
+    ctx.textAlign = 'center'; ctx.font = '16px sans-serif';
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = i < lives ? '#ff5a4d' : 'rgba(255,255,255,.2)';
+      ctx.fillText('\u2665', W / 2 - 42 + i * 22, 32);
+    }
     ctx.textAlign = 'right';
     ctx.fillStyle = 'rgba(16,21,27,.55)'; roundRect(W - 150, 12, 136, 34, 8); ctx.fill();
-    ctx.fillStyle = '#9fb0bd'; ctx.fillText('최고 ' + best, W - 28, 34);
+    ctx.fillStyle = '#9fb0bd'; ctx.font = '500 14px "Noto Sans KR", sans-serif'; ctx.fillText('최고 ' + best, W - 28, 34);
     ctx.textAlign = 'start';
   }
 
   // ===== 업데이트 =====
   function update() {
-    if (keys.gas) speed = Math.min(MAX_SPEED, speed + SEG * 0.022);
-    else if (keys.brake) speed = Math.max(0, speed - SEG * 0.05);
-    else speed += (CRUISE - speed) * 0.015;
+    // 속도 (상향된 가속/감속)
+    if (keys.gas) { speed = Math.min(MAX_SPEED, speed + SEG * 0.03); paddle += (-1 - paddle) * 0.25; }      // 업시프트(오른쪽) 당김
+    else if (keys.brake) { speed = Math.max(0, speed - SEG * 0.065); paddle += (1 - paddle) * 0.25; }        // 다운시프트(왼쪽) 당김
+    else { speed += (CRUISE - speed) * 0.02; paddle += (0 - paddle) * 0.2; }
     pedalGas.classList.toggle('active', keys.gas);
     pedalBrake.classList.toggle('active', keys.brake);
 
-    const steer = 0.012 + speed / MAX_SPEED * 0.004;
+    const steer = 0.013 + speed / MAX_SPEED * 0.004;
     if (keys.left) { playerX -= steer; steerVis += (-1 - steerVis) * 0.2; }
     else if (keys.right) { playerX += steer; steerVis += (1 - steerVis) * 0.2; }
     else steerVis += (0 - steerVis) * 0.2;
     playerX = Math.max(-1.1, Math.min(1.1, playerX));
 
     position += speed;
-    score = Math.floor(position / SEG);
+    score = Math.max(0, Math.floor(position / SEG) + bonus);
+    if (invuln > 0) invuln--;
 
-    // 스폰 (앞쪽 z에)
-    if (position + 5000 > spawnZ) {
+    // 스폰 — 아주 먼 z에 생성해 처음부터 작게 보이게
+    if (position + 9000 > spawnZ) {
       const lane = (Math.floor(Math.random() * LANES) - 1) * 0.62;
-      enemies.push({ z: spawnZ + 3000, x: lane, color: ENEMY_COLORS[Math.floor(Math.random()*ENEMY_COLORS.length)], hit: false, rot: 0, offx: 0, spin: 0, vy: 0 });
-      spawnZ += 1400 + Math.random() * 1200;
+      enemies.push({ z: spawnZ + 7000, x: lane, brand: BRANDS[Math.floor(Math.random()*BRANDS.length)], hit: false, rot: 0, offx: 0, spin: 0, vy: 0 });
+      spawnZ += 1100 + Math.random() * 1100;
     }
 
     // 충돌/정리
     for (const e of enemies) {
       const z = e.z - position;
       if (e.hit) { e.rot += e.spin; e.offx += e.spin * 0.6; e.z += e.vy; e.vy += 2; continue; }
-      if (z > 0 && z < SEG * 1.3) {
+      if (z > 0 && z < SEG * 1.3 && invuln === 0) {
         if (Math.abs(e.x - playerX) < 0.42) {
-          const fast = speed > CRUISE * 1.15;
+          const fast = speed > CRUISE * 1.1;
           if (fast) {
-            e.hit = true; e.spin = (e.x < playerX ? -1 : 1) * 0.08; e.vy = -speed * 0.2;
-            score += 50; speed = Math.max(CRUISE * 0.6, speed - SEG * 0.5);
-          } else { endGame(); return; }
+            // 빠르면 쳐냄: 점수 획득
+            e.hit = true; e.spin = (e.x < playerX ? -1 : 1) * 0.09; e.vy = -speed * 0.2;
+            bonus += 50; speed = Math.max(CRUISE * 0.7, speed - SEG * 0.5);
+          } else {
+            // 느리면 사고: 목숨 1 감소 + 점수 차감
+            e.hit = true; e.spin = (e.x < playerX ? -1 : 1) * 0.06; e.vy = -speed * 0.15;
+            lives--; invuln = 70;
+            bonus -= 30;
+            speed = Math.max(0, speed - SEG * 1.2);
+            if (lives <= 0) { endGame(); return; }
+          }
         }
       }
     }
-    enemies = enemies.filter(e => (e.z - position) > -400 && (e.z - position) < 40000 && Math.abs(e.offx) < 3);
+    enemies = enemies.filter(e => (e.z - position) > -400 && (e.z - position) < 60000 && Math.abs(e.offx) < 3);
   }
 
   function endGame() {
@@ -689,6 +795,10 @@
     enemies.slice().sort((a, b) => (b.z) - (a.z)).forEach(drawEnemy);
     drawCockpit();
     drawHUD();
+    // 피격 무적 중 화면 빨간 플래시
+    if (invuln > 0 && (invuln % 10) < 5) {
+      ctx.fillStyle = 'rgba(179,50,31,.18)'; ctx.fillRect(0, 0, W, H);
+    }
   }
 
   function loop() {
