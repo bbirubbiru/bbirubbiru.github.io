@@ -619,6 +619,8 @@
 
   let position, speed, playerX, carAngle, drifting, driftTime, combo, comboTimer,
       score, timeLeft, maxSpeedSeen, maxCombo, shake, lastCornerDir, offRoad;
+  let skyTime = 0;                  // 배경(강물·별) 애니메이션 시간
+  let viewCurve = 0, viewHill = 0;  // 부드럽게 보간된 화면 기울기/언덕
 
   const MAX_SPEED = 320;            // km/h 개념상 최고
   const ACCEL = 95, BRAKE = 160, DRAG = 40;
@@ -629,13 +631,14 @@
     drifting = false; driftTime = 0; combo = 0; comboTimer = 0;
     score = 0; timeLeft = 90; maxSpeedSeen = 0; maxCombo = 0;
     shake = 0; lastCornerDir = 0; offRoad = false;
+    viewCurve = 0; viewHill = 0;
   }
 
   // ---- 투영 ----
   const horizon = () => H * HORIZON_R;
-  function project(worldX, z) {
+  function project(worldX, worldY, z) {
     const s = CAM_D / Math.max(z, 1);
-    return { x: W / 2 + s * worldX * W / 2, y: horizon() - s * (0 - CAM_H) * H / 2, w: s * ROAD_W * W / 2, s };
+    return { x: W / 2 + s * worldX * W / 2, y: horizon() - s * (worldY - CAM_H) * H / 2, w: s * ROAD_W * W / 2, s };
   }
 
   // ---- 업데이트 (delta time) ----
@@ -649,7 +652,14 @@
     speed = Math.max(0, Math.min(MAX_SPEED, speed));
 
     const spdR = speed / MAX_SPEED;
-    const nowCurve = segAt(Math.floor(position / SEG)).curve;
+    // 세그먼트 사이를 선형 보간한 현재 커브/언덕 (부드러운 코너링)
+    const fi = position / SEG;
+    const i0 = Math.floor(fi), frac = fi - i0;
+    const nowCurve = segAt(i0).curve * (1 - frac) + segAt(i0 + 1).curve * frac;
+    const nowHill  = segAt(i0).hill  * (1 - frac) + segAt(i0 + 1).hill  * frac;
+    // 화면 기울기·언덕을 더 부드럽게 따라가게(관성)
+    viewCurve += (nowCurve - viewCurve) * Math.min(1, dt * 4);
+    viewHill  += (nowHill  - viewHill)  * Math.min(1, dt * 4);
 
     // 조향 (고속일수록 둔화)
     const steerPower = (0.9 - spdR * 0.45);
@@ -728,6 +738,11 @@
     if (shake > 0) { sx = (Math.random() - 0.5) * shake; sy = (Math.random() - 0.5) * shake; }
     ctx.save();
     ctx.translate(sx, sy);
+    // 커브·드리프트에 따른 미세한 카메라 롤 — 부드러운 코너링감
+    if (!reduceMotion) {
+      const roll = (viewCurve * 0.012 + carAngle * 0.04);
+      ctx.translate(W / 2, H / 2); ctx.rotate(roll); ctx.translate(-W / 2, -H / 2);
+    }
     drawSky();
     drawRoad();
     drawCar();
@@ -736,22 +751,81 @@
 
   function drawSky() {
     const hz = horizon();
+    // 밤하늘 (깊은 남색 → 보랏빛 지평선)
     const g = ctx.createLinearGradient(0, 0, 0, hz);
-    g.addColorStop(0, '#0a1020'); g.addColorStop(.6, '#152138'); g.addColorStop(1, '#2a3a54');
+    g.addColorStop(0, '#070b16'); g.addColorStop(.45, '#121d33'); g.addColorStop(.78, '#24324f'); g.addColorStop(1, '#3a4a68');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, hz);
-    // 달
-    ctx.fillStyle = 'rgba(240,240,220,.85)';
-    ctx.beginPath(); ctx.arc(W * 0.78 - playerX * 40, hz * 0.4, 20, 0, Math.PI * 2); ctx.fill();
-    // 산 실루엣
-    ctx.fillStyle = '#0c1422';
-    ctx.beginPath(); ctx.moveTo(0, hz);
-    for (let i = 0; i <= 12; i++) ctx.lineTo(W * i / 12, hz - 24 - Math.sin(i * 1.3 + 1) * 22 - (i % 2) * 10);
-    ctx.lineTo(W, hz); ctx.closePath(); ctx.fill();
-    // 서울 불빛
-    for (let i = 0; i < 40; i++) {
-      const bx = (i * 97 % W), by = hz - 6 - (i * 53 % 20);
-      ctx.fillStyle = i % 4 ? 'rgba(255,220,150,.5)' : 'rgba(150,200,255,.5)';
-      ctx.fillRect(bx, by, 2, 2);
+
+    // 별 (살짝 반짝)
+    for (let i = 0; i < 46; i++) {
+      const bx = (i * 131 % W), by = (i * 71 % Math.floor(hz * 0.55));
+      const tw = reduceMotion ? 0.6 : 0.4 + 0.3 * Math.sin(skyTime * 2 + i);
+      ctx.fillStyle = `rgba(230,236,255,${tw})`;
+      ctx.fillRect(bx, by, 1.5, 1.5);
+    }
+    // 달 + 번짐
+    const mx = W * 0.8 - playerX * 30, my = hz * 0.32;
+    const mg = ctx.createRadialGradient(mx, my, 3, mx, my, 46);
+    mg.addColorStop(0, 'rgba(250,248,232,.95)'); mg.addColorStop(.4, 'rgba(240,238,214,.5)'); mg.addColorStop(1, 'rgba(240,238,214,0)');
+    ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(mx, my, 46, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(250,248,232,.95)'; ctx.beginPath(); ctx.arc(mx, my, 17, 0, Math.PI * 2); ctx.fill();
+
+    // --- 한강뷰: 지평선 근처에 강과 도시 ---
+    const riverTop = hz * 0.72;              // 강이 시작되는 높이
+    const cityBase = riverTop;               // 도시는 강 너머(위쪽)
+    // 강 건너 도시 스카이라인 (실루엣)
+    ctx.fillStyle = '#0d1526';
+    ctx.beginPath(); ctx.moveTo(0, cityBase);
+    let seed = 2;
+    for (let x = 0; x <= W; x += 14) {
+      seed = (seed * 9301 + 49297) % 233280;
+      const h = 10 + (seed / 233280) * 34;
+      ctx.lineTo(x, cityBase - h); ctx.lineTo(x + 14, cityBase - h);
+    }
+    ctx.lineTo(W, cityBase); ctx.closePath(); ctx.fill();
+    // 도시 창문 불빛
+    seed = 7;
+    for (let i = 0; i < 70; i++) {
+      seed = (seed * 9301 + 49297) % 233280; const r = seed / 233280;
+      const bx = r * W, by = cityBase - 4 - (((i * 37) % 30));
+      ctx.fillStyle = i % 5 === 0 ? 'rgba(150,200,255,.6)' : 'rgba(255,214,150,.6)';
+      ctx.fillRect(bx, by, 1.5, 2);
+    }
+    // 멀리 산 실루엣 (도시 뒤)
+    ctx.fillStyle = 'rgba(12,20,34,.7)';
+    ctx.beginPath(); ctx.moveTo(0, cityBase - 30);
+    for (let i = 0; i <= 12; i++) ctx.lineTo(W * i / 12, cityBase - 36 - Math.sin(i * 1.3 + 1) * 16 - (i % 2) * 8);
+    ctx.lineTo(W, cityBase - 30); ctx.closePath(); ctx.fill();
+
+    // 강물 (riverTop ~ hz)
+    const rg = ctx.createLinearGradient(0, riverTop, 0, hz);
+    rg.addColorStop(0, '#16233c'); rg.addColorStop(.5, '#0e1a30'); rg.addColorStop(1, '#0a1526');
+    ctx.fillStyle = rg; ctx.fillRect(0, riverTop, W, hz - riverTop);
+
+    // 대교: 수평 불빛 띠 + 교각
+    const bridgeY = riverTop + (hz - riverTop) * 0.34;
+    ctx.strokeStyle = 'rgba(255,214,150,.5)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, bridgeY); ctx.lineTo(W, bridgeY); ctx.stroke();
+    for (let x = 20; x < W; x += 46) {
+      ctx.fillStyle = 'rgba(255,224,160,.8)'; ctx.fillRect(x, bridgeY - 2, 2, 2);        // 가로등 점
+      ctx.fillStyle = 'rgba(120,150,200,.25)'; ctx.fillRect(x, bridgeY, 2, (hz - bridgeY) * 0.5); // 교각 그림자
+    }
+
+    // 달·불빛의 수면 반영 (세로로 흔들리는 빛기둥)
+    const reflX = mx;
+    for (let yy = riverTop; yy < hz; yy += 3) {
+      const t = (yy - riverTop) / (hz - riverTop);
+      const wob = reduceMotion ? 0 : Math.sin(skyTime * 3 + yy * 0.3) * (2 + t * 6);
+      ctx.fillStyle = `rgba(250,248,232,${0.16 * (1 - t)})`;
+      ctx.fillRect(reflX - 6 + wob, yy, 12, 2);
+    }
+    // 도시 불빛 잔물결 반영 (가로 줄)
+    for (let i = 0; i < 26; i++) {
+      const ry = riverTop + ((i * 53) % Math.floor(hz - riverTop));
+      const t = (ry - riverTop) / (hz - riverTop);
+      const wob = reduceMotion ? 0 : Math.sin(skyTime * 2 + i) * (3 + t * 10);
+      ctx.fillStyle = i % 4 === 0 ? `rgba(150,200,255,${0.1 * (1 - t) + 0.03})` : `rgba(255,214,150,${0.1 * (1 - t) + 0.03})`;
+      ctx.fillRect((i * 71 % W) + wob, ry, 10 + t * 14, 1.5);
     }
   }
 
@@ -762,41 +836,55 @@
 
   function drawRoad() {
     const base = Math.floor(position / SEG);
+    const segFrac = (position % SEG) / SEG;      // 세그먼트 내 진행 비율 (0~1)
     const xs = [], ys = [], ws = [];
-    let dx = 0, ddx = 0;
+    // 커브/언덕을 "속도"와 "위치"로 적분 → 세그먼트 경계에서도 매끄럽게 이어짐
+    let dx = 0, ddx = 0;       // 가로 오프셋, 그 변화량
+    let hy = 0, dhy = 0;       // 높이(언덕), 그 변화량
     for (let n = 0; n <= DRAW_N; n++) {
       const seg = segAt(base + n);
-      const z = n * SEG - (position % SEG) + SEG;
-      const p = project(-playerX * ROAD_W + dx, Math.max(z, 1));
+      // 첫 구간은 (1 - segFrac)만, 나머지는 전체 반영 → 스크롤이 연속적
+      const wgt = (n === 0) ? (1 - segFrac) : 1;
+      const z = (n - segFrac) * SEG + SEG;
+      const p = project(-playerX * ROAD_W + dx, hy, Math.max(z, 1));
       xs[n] = p.x; ys[n] = p.y; ws[n] = p.w;
-      ddx += seg.curve * 20; dx += ddx;
+      ddx += seg.curve * 20 * wgt; dx += ddx * wgt;
+      dhy += seg.hill * 0.9 * wgt; hy += dhy * wgt;
     }
     for (let n = DRAW_N - 1; n >= 0; n--) {
       const x1 = xs[n + 1], y1 = ys[n + 1], w1 = ws[n + 1];
       const x2 = xs[n], y2 = ys[n], w2 = ws[n];
-      if (w2 <= 0) continue;
+      if (w2 <= 0 || y2 <= y1) continue;
       const seg = base + n, dark = (seg % 2) === 0;
-      // 풀숲(산)
-      ctx.fillStyle = dark ? '#111a28' : '#15202f';
+      // 둔치/산 경사면
+      ctx.fillStyle = dark ? '#0f1826' : '#13202e';
       ctx.fillRect(0, y1, W, (y2 - y1) + 1);
-      // 가드레일(바깥)
-      ctx.fillStyle = dark ? '#3a4656' : '#46525f';
-      trapz(x1, y1, w1 * 1.14, x2, y2, w2 * 1.14);
+      // 가드레일(바깥) — 은은한 발광 테두리
+      ctx.fillStyle = dark ? '#36424f' : '#424e5b';
+      trapz(x1, y1, w1 * 1.15, x2, y2, w2 * 1.15);
       // 노면
-      ctx.fillStyle = dark ? '#1c222c' : '#222935';
+      ctx.fillStyle = dark ? '#1b212b' : '#212833';
       trapz(x1, y1, w1, x2, y2, w2);
-      // 차선
+      // 중앙 차선 점선
       if (dark) {
         ctx.fillStyle = 'rgba(240,230,200,.85)';
         trapz(x1, y1, w1 * 0.03, x2, y2, w2 * 0.03);
       }
-      // 가로등/반사경 (일정 간격)
-      if (seg % 8 === 0) {
-        ctx.fillStyle = '#ffdf8a';
-        const lx = x2 - w2 * 1.2;
-        ctx.fillRect(lx - 2, y2 - 8, 3, 8);
-        ctx.fillStyle = 'rgba(255,223,138,.35)';
-        ctx.beginPath(); ctx.arc(lx, y2 - 9, 4, 0, Math.PI * 2); ctx.fill();
+      // 가장자리 반사 표지(양쪽) — 일정 간격
+      if (seg % 5 === 0) {
+        ctx.fillStyle = 'rgba(255,224,160,.85)';
+        ctx.fillRect(x2 - w2 * 1.12, y2 - 2, 2.5, 3);
+        ctx.fillStyle = 'rgba(160,200,255,.7)';
+        ctx.fillRect(x2 + w2 * 1.12, y2 - 2, 2.5, 3);
+      }
+      // 가로등 (더 드물게, 왼쪽)
+      if (seg % 10 === 0) {
+        const lx = x2 - w2 * 1.25;
+        ctx.fillStyle = '#5a6675'; ctx.fillRect(lx - 1, y2 - 12, 2, 12);
+        ctx.fillStyle = 'rgba(255,223,138,.9)';
+        ctx.beginPath(); ctx.arc(lx, y2 - 12, 3, 0, Math.PI * 2); ctx.fill();
+        if (!reduceMotion) { ctx.fillStyle = 'rgba(255,223,138,.25)';
+          ctx.beginPath(); ctx.arc(lx, y2 - 12, 7, 0, Math.PI * 2); ctx.fill(); }
       }
     }
   }
@@ -848,7 +936,9 @@
     if (!last) last = ts;
     let dt = (ts - last) / 1000; last = ts;
     if (dt > 0.05) dt = 0.05;           // 탭 복귀 등 큰 점프 제한
+    if (!reduceMotion) skyTime += dt;   // 배경(강물·별)은 항상 은은하게 흐름
     if (state === 'run') { update(dt); render(); }
+    else if (state === 'start' || state === 'result' || state === 'pause') { render(); }
   }
 
   // ---- 상태 전환 ----
