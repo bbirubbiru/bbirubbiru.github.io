@@ -1,3 +1,13 @@
 # Kiro 로컬 설정 (MCP 연결 설정, 개인 기록 페이지 주소가 담긴 steering)
 # GitHub에 공개할 필요가 없는 개인용 파일이므로 제외한다.
 .kiro/
+# 환경 변수 (비밀 키) — 절대 커밋하지 않는다
+.env
+.env.*
+!.env.example
+
+# 의존성 / 빌드 산출물
+node_modules/
+
+# Vercel 로컬 설정
+.vercel/
