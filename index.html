@@ -167,6 +167,7 @@ footer{padding:25px 0;color:#68736a;font-size:10px;letter-spacing:.08em;display:
   const ZONE = 0.25;      // 위/아래 각각 화면 높이의 25%를 활성 구역으로
   const BASE_SPEED = 29;  // 안쪽 구역의 기본 속도(픽셀/프레임)
   const FAST_SPEED = 58;  // 바깥쪽(화면 끝) 구역의 속도 = 기본의 약 2배
+  const RIGHT_GUARD = 40; // 오른쪽 끝 40px(스크롤바 영역)에서는 자동 스크롤 끔
   let targetSpeed = 0;    // 양수면 아래로, 음수면 위로
   let inside = false;     // 커서가 창 안에 있는지
   let raf = null;
@@ -181,6 +182,16 @@ footer{padding:25px 0;color:#68736a;font-size:10px;letter-spacing:.08em;display:
     inside = true;
     const h = window.innerHeight;
     const y = e.clientY;
+
+    // 오른쪽 끝(스크롤바)에서는 방해되지 않도록 비활성화.
+    // document.documentElement.clientWidth 는 스크롤바를 뺀 콘텐츠 폭이라,
+    // 그보다 오른쪽이면 커서가 스크롤바 위에 있는 것으로 본다.
+    const contentWidth = document.documentElement.clientWidth;
+    if (e.clientX >= contentWidth - RIGHT_GUARD) {
+      targetSpeed = 0;
+      return;
+    }
+
     const topEdge = h * ZONE;
     const bottomEdge = h * (1 - ZONE);
 
