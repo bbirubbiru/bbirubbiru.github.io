@@ -158,23 +158,22 @@ footer{padding:25px 0;color:#68736a;font-size:10px;letter-spacing:.08em;display:
    - 화면 아래쪽 영역에 마우스가 있으면 아래로, 위쪽 영역이면 위로 자동 스크롤.
    - 활성 구역을 2단계로 나눔: 안쪽 절반은 기본 속도, 바깥쪽(화면 끝) 절반은 약 2배 속도.
    - 가운데(비활성 구역)에서는 멈춘다.
+   - 오른쪽 끝(스크롤바 영역)에서는 비활성화.
    - 터치 기기, 모션 축소 설정(prefers-reduced-motion)에서는 비활성화. */
 (() => {
   const isTouch = window.matchMedia("(pointer: coarse)").matches;
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (isTouch || reduce) return;
 
-  const ZONE = 0.25;      // 위/아래 각각 화면 높이의 25%를 활성 구역으로
-  const BASE_SPEED = 29;  // 안쪽 구역의 기본 속도(픽셀/프레임)
-  const FAST_SPEED = 58;  // 바깥쪽(화면 끝) 구역의 속도 = 기본의 약 2배
-  const RIGHT_GUARD = 40; // 오른쪽 끝 40px(스크롤바 영역)에서는 자동 스크롤 끔
-  let targetSpeed = 0;    // 양수면 아래로, 음수면 위로
-  let inside = false;     // 커서가 창 안에 있는지
-  let raf = null;
+  const ZONE = 0.25;       // 위/아래 각각 화면 높이의 25%를 활성 구역으로
+  const BASE_SPEED = 29;   // 안쪽 구역의 기본 속도(픽셀/프레임)
+  const FAST_SPEED = 58;   // 바깥쪽(화면 끝) 구역의 속도 = 기본의 약 2배
+  const RIGHT_GUARD = 40;  // 오른쪽 끝 40px(스크롤바 영역)에서는 자동 스크롤 끔
 
-  // 활성 구역 안에서의 위치(0=비활성 경계, 1=화면 끝)에 따라 속도 단계를 고른다.
-  // 안쪽 절반(0~0.5) -> 기본 속도, 바깥쪽 절반(0.5~1) -> 2배 속도.
-  function speedFor(ratio) {
+  let speed = 0;           // 현재 적용 속도(양수=아래, 음수=위)
+  let inside = false;      // 커서가 창 안에 있는지
+
+  function speedFor(ratio) {           // 바깥 절반이면 2배속
     return ratio >= 0.5 ? FAST_SPEED : BASE_SPEED;
   }
 
@@ -183,54 +182,33 @@ footer{padding:25px 0;color:#68736a;font-size:10px;letter-spacing:.08em;display:
     const h = window.innerHeight;
     const y = e.clientY;
 
-    // 오른쪽 끝(스크롤바)에서는 방해되지 않도록 비활성화.
-    // document.documentElement.clientWidth 는 스크롤바를 뺀 콘텐츠 폭이라,
-    // 그보다 오른쪽이면 커서가 스크롤바 위에 있는 것으로 본다.
+    // 오른쪽 끝(스크롤바)에서는 비활성화
     const contentWidth = document.documentElement.clientWidth;
-    if (e.clientX >= contentWidth - RIGHT_GUARD) {
-      targetSpeed = 0;
-      return;
-    }
+    if (e.clientX >= contentWidth - RIGHT_GUARD) { speed = 0; return; }
 
     const topEdge = h * ZONE;
     const bottomEdge = h * (1 - ZONE);
-
     if (y < topEdge) {
-      // 위쪽: 위로 갈수록 ratio가 1에 가까움 (음수 방향)
-      const ratio = (topEdge - y) / topEdge; // 0~1
-      targetSpeed = -speedFor(ratio);
+      speed = -speedFor((topEdge - y) / topEdge);
     } else if (y > bottomEdge) {
-      // 아래쪽: 아래로 갈수록 ratio가 1에 가까움 (양수 방향)
-      const ratio = (y - bottomEdge) / (h - bottomEdge); // 0~1
-      targetSpeed = speedFor(ratio);
+      speed = speedFor((y - bottomEdge) / (h - bottomEdge));
     } else {
-      targetSpeed = 0; // 가운데 비활성 구역
-    }
-    start();
-  }
-
-  function stopScrolling() {
-    inside = false;
-    targetSpeed = 0;
-  }
-
-  function tick() {
-    if (targetSpeed !== 0 && inside) {
-      window.scrollBy(0, targetSpeed);
-      raf = requestAnimationFrame(tick);
-    } else {
-      raf = null; // 멈추면 루프 종료 (불필요한 연산 방지)
-    }
-  }
-  function start() {
-    if (raf === null && targetSpeed !== 0 && inside) {
-      raf = requestAnimationFrame(tick);
+      speed = 0;
     }
   }
 
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseleave", stopScrolling); // 커서가 창 밖으로 나가면 멈춤
-  window.addEventListener("blur", stopScrolling);        // 창 포커스 잃으면 멈춤
+  function stop() { inside = false; speed = 0; }
+
+  // rAF 루프를 항상 돌린다(재시작 타이밍 버그 방지). 속도가 0이면 아무 일도 안 함.
+  function loop() {
+    if (inside && speed !== 0) window.scrollBy(0, speed);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  window.addEventListener("mousemove", onMove, { passive: true });
+  window.addEventListener("mouseleave", stop);
+  window.addEventListener("blur", stop);
 })();
 </script>
 </body></html>
