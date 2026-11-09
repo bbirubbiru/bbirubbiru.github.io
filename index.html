@@ -156,7 +156,8 @@ footer{padding:25px 0;color:#68736a;font-size:10px;letter-spacing:.08em;display:
 <script>
 /* 마우스 위치 기반 자동 스크롤
    - 화면 아래쪽 영역에 마우스가 있으면 아래로, 위쪽 영역이면 위로 자동 스크롤.
-   - 가장자리에 가까울수록 빠르게. 가운데(비활성 구역)에서는 멈춘다.
+   - 활성 구역을 2단계로 나눔: 안쪽 절반은 기본 속도, 바깥쪽(화면 끝) 절반은 약 2배 속도.
+   - 가운데(비활성 구역)에서는 멈춘다.
    - 터치 기기, 모션 축소 설정(prefers-reduced-motion)에서는 비활성화. */
 (() => {
   const isTouch = window.matchMedia("(pointer: coarse)").matches;
@@ -164,10 +165,17 @@ footer{padding:25px 0;color:#68736a;font-size:10px;letter-spacing:.08em;display:
   if (isTouch || reduce) return;
 
   const ZONE = 0.25;      // 위/아래 각각 화면 높이의 25%를 활성 구역으로
-  const MAX_SPEED = 29;   // 프레임당 최대 이동 픽셀 (기존 22에서 약 30% 상향)
+  const BASE_SPEED = 29;  // 안쪽 구역의 기본 속도(픽셀/프레임)
+  const FAST_SPEED = 58;  // 바깥쪽(화면 끝) 구역의 속도 = 기본의 약 2배
   let targetSpeed = 0;    // 양수면 아래로, 음수면 위로
   let inside = false;     // 커서가 창 안에 있는지
   let raf = null;
+
+  // 활성 구역 안에서의 위치(0=비활성 경계, 1=화면 끝)에 따라 속도 단계를 고른다.
+  // 안쪽 절반(0~0.5) -> 기본 속도, 바깥쪽 절반(0.5~1) -> 2배 속도.
+  function speedFor(ratio) {
+    return ratio >= 0.5 ? FAST_SPEED : BASE_SPEED;
+  }
 
   function onMove(e) {
     inside = true;
@@ -177,13 +185,13 @@ footer{padding:25px 0;color:#68736a;font-size:10px;letter-spacing:.08em;display:
     const bottomEdge = h * (1 - ZONE);
 
     if (y < topEdge) {
-      // 위쪽: 위로 갈수록 강하게 (음수)
-      const strength = (topEdge - y) / topEdge; // 0~1
-      targetSpeed = -strength * MAX_SPEED;
+      // 위쪽: 위로 갈수록 ratio가 1에 가까움 (음수 방향)
+      const ratio = (topEdge - y) / topEdge; // 0~1
+      targetSpeed = -speedFor(ratio);
     } else if (y > bottomEdge) {
-      // 아래쪽: 아래로 갈수록 강하게 (양수)
-      const strength = (y - bottomEdge) / (h - bottomEdge); // 0~1
-      targetSpeed = strength * MAX_SPEED;
+      // 아래쪽: 아래로 갈수록 ratio가 1에 가까움 (양수 방향)
+      const ratio = (y - bottomEdge) / (h - bottomEdge); // 0~1
+      targetSpeed = speedFor(ratio);
     } else {
       targetSpeed = 0; // 가운데 비활성 구역
     }
