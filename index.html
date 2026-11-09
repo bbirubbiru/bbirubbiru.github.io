@@ -153,4 +153,65 @@ footer{padding:25px 0;color:#68736a;font-size:10px;letter-spacing:.08em;display:
   loadCounts();
 })();
 </script>
+<script>
+/* 마우스 위치 기반 자동 스크롤
+   - 화면 아래쪽 영역에 마우스가 있으면 아래로, 위쪽 영역이면 위로 자동 스크롤.
+   - 가장자리에 가까울수록 빠르게. 가운데(비활성 구역)에서는 멈춘다.
+   - 터치 기기, 모션 축소 설정(prefers-reduced-motion)에서는 비활성화. */
+(() => {
+  const isTouch = window.matchMedia("(pointer: coarse)").matches;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (isTouch || reduce) return;
+
+  const ZONE = 0.25;      // 위/아래 각각 화면 높이의 25%를 활성 구역으로
+  const MAX_SPEED = 29;   // 프레임당 최대 이동 픽셀 (기존 22에서 약 30% 상향)
+  let targetSpeed = 0;    // 양수면 아래로, 음수면 위로
+  let inside = false;     // 커서가 창 안에 있는지
+  let raf = null;
+
+  function onMove(e) {
+    inside = true;
+    const h = window.innerHeight;
+    const y = e.clientY;
+    const topEdge = h * ZONE;
+    const bottomEdge = h * (1 - ZONE);
+
+    if (y < topEdge) {
+      // 위쪽: 위로 갈수록 강하게 (음수)
+      const strength = (topEdge - y) / topEdge; // 0~1
+      targetSpeed = -strength * MAX_SPEED;
+    } else if (y > bottomEdge) {
+      // 아래쪽: 아래로 갈수록 강하게 (양수)
+      const strength = (y - bottomEdge) / (h - bottomEdge); // 0~1
+      targetSpeed = strength * MAX_SPEED;
+    } else {
+      targetSpeed = 0; // 가운데 비활성 구역
+    }
+    start();
+  }
+
+  function stopScrolling() {
+    inside = false;
+    targetSpeed = 0;
+  }
+
+  function tick() {
+    if (targetSpeed !== 0 && inside) {
+      window.scrollBy(0, targetSpeed);
+      raf = requestAnimationFrame(tick);
+    } else {
+      raf = null; // 멈추면 루프 종료 (불필요한 연산 방지)
+    }
+  }
+  function start() {
+    if (raf === null && targetSpeed !== 0 && inside) {
+      raf = requestAnimationFrame(tick);
+    }
+  }
+
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseleave", stopScrolling); // 커서가 창 밖으로 나가면 멈춤
+  window.addEventListener("blur", stopScrolling);        // 창 포커스 잃으면 멈춤
+})();
+</script>
 </body></html>
